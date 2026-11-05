@@ -51,7 +51,7 @@ Dit zet de tijdzone op `Europe/Amsterdam` en noemt precies welke rechten het scr
 
 ### 3. Club invullen en toestemming geven
 
-1. Zoek je club op in het Match Center. De clubcode is de code van letters en cijfers in de URL van de clubpagina (bijvoorbeeld `HH11AN5`). Vul die in `Config.gs` in bij `CLUB_CODE` en sla op.
+1. Zoek je club op in het Match Center. De clubcode is de code van letters en cijfers in de URL van de clubpagina (bijvoorbeeld `HH11HM9`). Vul die in `Config.gs` in bij `CLUB_CODE` en sla op.
 2. Kies bovenin de functie **`checkPermissions`** en klik op **Uitvoeren**.
 3. Google vraagt om toestemming. Omdat het je eigen script is, zie je de melding *"Google heeft deze app niet geverifieerd"*. Klik op **Geavanceerd** → **Ga naar Hockey agenda (onveilig)** → **Toestaan**.
 
@@ -63,7 +63,7 @@ Dit zet de tijdzone op `Europe/Amsterdam` en noemt precies welke rechten het scr
 1. Voer de functie **`listClubTeams`** uit. In het **Uitvoeringslogboek** staat per team een regel zoals:
 
    ```
-   TEAM_ID=1975  recent_poule=12345  Jongens O11-1  [field]
+   TEAM_ID=8747  recent_poule=12345  D1  [field]
    ```
 
 2. Vul het nummer in `Config.gs` in bij `TEAM_ID` en sla op.
