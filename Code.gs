@@ -9,11 +9,12 @@
  * Unofficial: this talks to the (undocumented) API behind the Match Center
  * web app. It can break when that API changes.
  *
- * All settings live in Script Properties (Project Settings -> Script
- * properties). Run seedConfig once to create them. See README.md.
+ * Settings: put them in Config.gs (a separate file, kept when you update this
+ * one) and/or in Script Properties (Project Settings). Script Properties win
+ * over Config.gs, which wins over the defaults below. See README.md.
  */
 
-var VERSION = '6.1.0';
+var VERSION = '6.3.0';
 
 /* ================================================================== *
  * DEFAULTS  (do not edit here: override them in Script Properties)
@@ -62,7 +63,7 @@ var DEFAULTS = {
   COLOR_CANCELLED:       'GRAY',
 
   // --- Reminders on calendar items -----------------------------------
-  REMINDERS:             'true',      // true | false | default (calendar's own)
+  REMINDERS:             'default',      // true | false | default (calendar's own)
   REMINDER_MINUTES:      '90',        // one or more, comma-separated
   REMINDER_TARGET:       'first',     // first | match | all
 
@@ -134,7 +135,8 @@ var SUB_KINDS = [KIND.WARMUP, KIND.TRAVEL, KIND.RETURN];
 
 var MIN = 60000, DAY = 864e5;
 var CONFIG = {}, RAW = {};
-var PROP = PropertiesService.getScriptProperties();
+var PROP  = PropertiesService.getScriptProperties();   // your settings (visible in Project Settings)
+var STATE = PropertiesService.getUserProperties();     // the script's own bookkeeping (not shown there)
 var _clubCache = null;   // per-execution memo
 
 
@@ -142,29 +144,128 @@ var _clubCache = null;   // per-execution memo
  * CONFIG
  * ================================================================== */
 
-function loadConfig_() {
-  var p = PROP.getProperties();
-  migrateLegacy_(p);
+var INTERNAL_KEYS = ['deviceUUID', 'deviceToken', 'pouleCache', 'syncTeam', 'syncClub', 'lastSync', 'titleSig',
+                     'autoLabel', 'autoCalendar', 'autoOrigin', 'travelCache'];
+var INTERNAL_PREFIXES = ['tc_', 'undated_', 'auto_'];
+var AUTO_KEYS = ['TEAM_LABEL', 'CALENDAR_NAME', 'TRAVEL_ORIGIN'];
+var OLD_AUTO_FLAGS = { TEAM_LABEL: 'autoLabel', CALENDAR_NAME: 'autoCalendar', TRAVEL_ORIGIN: 'autoOrigin' };
 
-  function raw(k) {
-    var v = p[k];
-    return (v !== undefined && v !== null && String(v).trim() !== '') ? String(v).trim() : String(DEFAULTS[k]);
+// What seedConfig puts in Script Properties. Everything else can be added by hand when needed.
+var STARTER_KEYS = ['CLUB_CODE', 'TEAM_ID', 'NOTIFY_EMAIL', 'EMAIL_DELIVERY', 'NOTIFY_TYPES',
+                    'WARMUP_MODE', 'WARMUP_MINUTES', 'TRAVEL_MODE', 'REMINDERS', 'REMINDER_MINUTES'];
+var REQUIRED_SCOPES = [
+  'https://www.googleapis.com/auth/calendar',
+  'https://www.googleapis.com/auth/script.external_request',
+  'https://www.googleapis.com/auth/script.send_mail',
+  'https://www.googleapis.com/auth/script.scriptapp',
+  'https://www.googleapis.com/auth/gmail.insert',
+  'https://www.googleapis.com/auth/userinfo.email',
+];
+
+// Used to write Config.gs (exportConfig) with a short explanation per setting.
+var CONFIG_SECTIONS = {
+  CLUB_CODE: 'Verplicht', POULE_ID: 'Team en competitie', CALENDAR_NAME: 'Agenda', WARMUP_MODE: 'Warming-up',
+  TRAVEL_MODE: 'Reistijd (uitwedstrijden)', TITLE_MATCH: 'Titels (tokens: zie README)',
+  COLOR_MATCH: 'Kleuren (leeg = kleur van de agenda; naam of 1-11)', REMINDERS: 'Herinneringen op agenda-items',
+  NOTIFY_TYPES: 'Meldingen', TELEGRAM_BOT_TOKEN: 'Telegram', WHATSAPP_RECIPIENTS: 'WhatsApp (via CallMeBot)',
+  NTFY_TOPIC: 'ntfy', WEBHOOK_URL: 'Webhook (Discord, Slack, Google Chat, eigen endpoint)',
+  PURGE_PREVIOUS_TEAM: 'Gedrag', API_BASE: 'Geavanceerd',
+};
+var CONFIG_HELP = {
+  CLUB_CODE: 'clubcode uit de Match Center-URL, bijv. HH11AN5',
+  TEAM_ID: 'draai listClubTeams om het te vinden',
+  POULE_ID: 'leeg = alle poules van het team',
+  TEAM_LABEL: 'leeg = korte teamnaam (automatisch)',
+  INCLUDE_PLAYED: 'ook gespeelde wedstrijden importeren',
+  CALENDAR_NAME: 'leeg = "Hockey <club>" (automatisch)',
+  MATCH_MINUTES: 'duur van het wedstrijditem',
+  UNKNOWN_TIME_ALLDAY: 'tijd n.n.b. -> hele-dag-item',
+  WARMUP_MODE: 'separate | include | off',
+  WARMUP_MINUTES: 'zoveel minuten voor aanvang aanwezig',
+  TRAVEL_MODE: 'separate | include | off',
+  TRAVEL_ORIGIN: 'vertrekadres; leeg = clubadres (automatisch)',
+  TRAVEL_BUFFER_MINUTES: 'extra marge op de rijtijd',
+  TRAVEL_ROUND_MINUTES: 'rijtijd naar boven afronden op een veelvoud hiervan',
+  RETURN_TRAVEL: 'ook een item voor de terugreis',
+  RETURN_DELAY_MINUTES: 'terugreis begint zo lang na de wedstrijd',
+  REMINDERS: 'true | false | default',
+  REMINDER_MINUTES: 'minuten vooraf; meerdere met komma, bijv. 90,1440',
+  REMINDER_TARGET: 'first | match | all',
+  NOTIFY_TYPES: 'cancelled,time,moved,restored,location,new,changed,removed,result of all',
+  NOTIFY_EMOJI: 'emoji voor elke regel',
+  NOTIFY_EMAIL: 'een of meer adressen, komma-gescheiden',
+  EMAIL_DELIVERY: 'auto | inbox | send',
+  EMAIL_TYPES: 'leeg = NOTIFY_TYPES', TELEGRAM_TYPES: 'leeg = NOTIFY_TYPES', WHATSAPP_TYPES: 'leeg = NOTIFY_TYPES',
+  NTFY_TYPES: 'leeg = NOTIFY_TYPES', WEBHOOK_TYPES: 'leeg = NOTIFY_TYPES',
+  TELEGRAM_BOT_TOKEN: 'van @BotFather',
+  TELEGRAM_CHAT_ID: 'draai telegramChatIds; meerdere met komma',
+  WHATSAPP_RECIPIENTS: '+31612345678:apikey, meerdere met komma',
+  NTFY_TOPIC: 'lange, onvoorspelbare naam',
+  NTFY_TOKEN: 'alleen voor een beveiligde server',
+  PURGE_PREVIOUS_TEAM: 'bij teamwissel de toekomstige items van het vorige team verwijderen',
+  CANCEL_KEYWORDS: 'woorden die een afgelasting aangeven',
+  SYNC_INTERVAL_HOURS: '1, 2, 4, 6, 8, 12 of 24 (voor installTrigger)',
+  DEVICE_UUID: 'leeg = automatisch',
+};
+
+var EDITOR_LIMIT = 50;   // the Apps Script editor shows (and edits) at most 50 script properties
+var STORAGE_VERSION = '2';
+var WARNINGS = [], SRC = {}, FILE = {};
+
+function loadConfig_() {
+  WARNINGS = []; SRC = {};
+  migrateStorage_();
+  var p = PROP.getProperties();
+  var st = STATE.getProperties();
+  migrateLegacy_(p);
+  fixKeys_(p);
+  FILE = readConfigFile_();
+  function file(k) { return FILE.hasOwnProperty(k) ? FILE[k] : ''; }
+  function auto(k) { return AUTO_KEYS.indexOf(k) >= 0 ? cleanValue_(st['auto_' + k] || '') : ''; }
+
+  function has(k) { return p[k] !== undefined && p[k] !== null && cleanValue_(p[k]) !== ''; }
+  function raw(k) { return has(k) ? cleanValue_(p[k]) : (file(k) || auto(k) || String(DEFAULTS[k])); }
+  function warnBad(k, expected) {
+    WARNINGS.push(k + ' = "' + p[k] + '" is geen geldige waarde (' + expected + '); standaard "' + DEFAULTS[k] + '" gebruikt.');
   }
-  function int(k) { var n = parseInt(raw(k), 10); return isNaN(n) ? (parseInt(DEFAULTS[k], 10) || 0) : n; }
-  function bool(k) { return isTrue_(raw(k)); }
-  function oneOf(k, opts) { var v = raw(k).toLowerCase(); return opts.indexOf(v) >= 0 ? v : String(DEFAULTS[k]); }
+  function int(k) {
+    var n = parseInt(raw(k), 10);
+    if (!isNaN(n)) return n;
+    if (has(k)) warnBad(k, 'een getal');
+    return parseInt(DEFAULTS[k], 10) || 0;
+  }
+  function bool(k) {
+    var v = raw(k);
+    if (isTrue_(v)) return true;
+    if (isFalse_(v)) return false;
+    warnBad(k, 'true | false');
+    return isTrue_(DEFAULTS[k]);
+  }
+  function oneOf(k, opts, aliases) {
+    var v = raw(k).toLowerCase().replace(/[.\s]+$/, '');
+    if (aliases && aliases[v]) v = aliases[v];
+    if (opts.indexOf(v) >= 0) return v;
+    warnBad(k, opts.join(' | '));
+    return String(DEFAULTS[k]);
+  }
   function list(k) { return raw(k).split(/[,;]/).map(function (s) { return s.trim(); }).filter(String); }
 
   for (var i = 0; i < CONFIG_KEYS.length; i++) {
     var k = CONFIG_KEYS[i];
     RAW[k] = raw(k);
     CONFIG[k] = RAW[k];
+    SRC[k] = has(k) ? 'scripteigenschap' : (file(k) ? 'Config.gs' : (auto(k) ? 'automatisch' : 'standaard'));
+    if (has(k) && file(k) && cleanValue_(p[k]) !== file(k)) {
+      WARNINGS.push(k + ': de scripteigenschap ("' + (SECRET_KEYS.indexOf(k) >= 0 ? 'verborgen' : cleanValue_(p[k])) +
+                    '") wint van Config.gs. Draai updateConfig om Config.gs te laten gelden.');
+    }
   }
 
   CONFIG.INCLUDE_PLAYED        = bool('INCLUDE_PLAYED');
   CONFIG.UNKNOWN_TIME_ALLDAY   = bool('UNKNOWN_TIME_ALLDAY');
   CONFIG.RETURN_TRAVEL         = bool('RETURN_TRAVEL');
   CONFIG.PURGE_PREVIOUS_TEAM   = bool('PURGE_PREVIOUS_TEAM');
+  CONFIG.NOTIFY_EMOJI          = bool('NOTIFY_EMOJI');
 
   CONFIG.MATCH_MINUTES         = int('MATCH_MINUTES');
   CONFIG.WARMUP_MINUTES        = int('WARMUP_MINUTES');
@@ -173,64 +274,307 @@ function loadConfig_() {
   CONFIG.RETURN_DELAY_MINUTES  = int('RETURN_DELAY_MINUTES');
   CONFIG.SYNC_INTERVAL_HOURS   = int('SYNC_INTERVAL_HOURS');
 
-  CONFIG.WARMUP_MODE     = oneOf('WARMUP_MODE', ['separate', 'include', 'off']);
-  CONFIG.TRAVEL_MODE     = oneOf('TRAVEL_MODE', ['separate', 'include', 'off']);
-  CONFIG.REMINDER_TARGET = oneOf('REMINDER_TARGET', ['first', 'match', 'all']);
+  var modeAlias = { apart: 'separate', los: 'separate', samen: 'include', erbij: 'include', uit: 'off', none: 'off', geen: 'off' };
+  CONFIG.WARMUP_MODE     = oneOf('WARMUP_MODE', ['separate', 'include', 'off'], modeAlias);
+  CONFIG.TRAVEL_MODE     = oneOf('TRAVEL_MODE', ['separate', 'include', 'off'], modeAlias);
+  CONFIG.REMINDER_TARGET = oneOf('REMINDER_TARGET', ['first', 'match', 'all'],
+                                 { eerste: 'first', wedstrijd: 'match', alle: 'all', alles: 'all' });
+  CONFIG.EMAIL_DELIVERY  = oneOf('EMAIL_DELIVERY', ['auto', 'inbox', 'send'],
+                                 { automatisch: 'auto', postvak: 'inbox', versturen: 'send', verzenden: 'send', mail: 'send' });
 
   var rem = raw('REMINDERS').toLowerCase();
-  CONFIG.REMINDERS = /^(default|standaard)$/.test(rem) ? 'default' : (isTrue_(rem) ? 'on' : 'off');
+  if (/^(default|standaard)$/.test(rem)) CONFIG.REMINDERS = 'default';
+  else if (isTrue_(rem)) CONFIG.REMINDERS = 'on';
+  else if (isFalse_(rem)) CONFIG.REMINDERS = 'off';
+  else { warnBad('REMINDERS', 'true | false | default'); CONFIG.REMINDERS = 'on'; }
   CONFIG.REMINDER_MINUTES = list('REMINDER_MINUTES')
     .map(function (s) { return parseInt(s, 10); })
     .filter(function (n) { return n > 0 && n <= 40320; });
   if (CONFIG.REMINDERS === 'on' && !CONFIG.REMINDER_MINUTES.length) CONFIG.REMINDERS = 'off';
 
-  CONFIG.NOTIFY = parseTypes_(raw('NOTIFY_TYPES'));
+  CONFIG.NOTIFY = parseTypes_(raw('NOTIFY_TYPES'), 'NOTIFY_TYPES');
   CONFIG.CH_TYPES = {};
   CHANNELS.forEach(function (c) {
     var v = raw(c + '_TYPES');
-    CONFIG.CH_TYPES[c] = v ? parseTypes_(v) : CONFIG.NOTIFY;
+    CONFIG.CH_TYPES[c] = v ? parseTypes_(v, c + '_TYPES') : CONFIG.NOTIFY;
   });
-  CONFIG.NOTIFY_EMOJI   = bool('NOTIFY_EMOJI');
-  CONFIG.EMAIL_DELIVERY = oneOf('EMAIL_DELIVERY', ['auto', 'inbox', 'send']);
-  CONFIG.NTFY_SERVER    = raw('NTFY_SERVER').replace(/\/+$/, '');
 
+  CONFIG.NOTIFY_EMAIL = list('NOTIFY_EMAIL').join(', ');
+  list('NOTIFY_EMAIL').forEach(function (a) {
+    if (!/^[^@\s<>]+@[^@\s<>]+\.[^@\s<>]+$/.test(a)) WARNINGS.push('NOTIFY_EMAIL: "' + a + '" lijkt geen geldig e-mailadres.');
+  });
+
+  CONFIG.NTFY_SERVER     = raw('NTFY_SERVER').replace(/\/+$/, '');
   CONFIG.CANCEL_KEYWORDS = list('CANCEL_KEYWORDS').map(function (s) { return s.toLowerCase(); });
-  CONFIG.API_BASE = raw('API_BASE').replace(/\/+$/, '');
+  CONFIG.API_BASE        = raw('API_BASE').replace(/\/+$/, '');
+
+  var n = Object.keys(p).length;
+  if (n > EDITOR_LIMIT - 5) {
+    WARNINGS.push('Er staan ' + n + ' scripteigenschappen. De editor toont er maximaal ' + EDITOR_LIMIT +
+                  ' en is daarboven alleen-lezen. Draai tidyConfig om waarden die gelijk zijn aan de standaard op te ruimen.');
+  }
+  for (var w = 0; w < WARNINGS.length; w++) Logger.log('LET OP: ' + WARNINGS[w]);
+}
+
+/**
+ * Once per install: move the script's own bookkeeping out of Script Properties
+ * (into User Properties) and drop settings that just repeat the default, so
+ * the list in Project Settings stays short and editable.
+ */
+function migrateStorage_() {
+  if (STATE.getProperty('storageVersion') === STORAGE_VERSION) return;
+  var p = PROP.getProperties(), moved = 0;
+
+  // Automatically filled values (v6.0/6.1 kept them as settings with a flag).
+  AUTO_KEYS.forEach(function (k) {
+    var flag = OLD_AUTO_FLAGS[k];
+    if (p[flag] === '1' && p[k]) { STATE.setProperty('auto_' + k, p[k]); PROP.deleteProperty(k); delete p[k]; moved++; }
+  });
+
+  // Internal bookkeeping.
+  Object.keys(p).forEach(function (k) {
+    if (!isInternalKey_(k)) return;
+    if (['autoLabel', 'autoCalendar', 'autoOrigin', 'travelCache'].indexOf(k) < 0) STATE.setProperty(k, p[k]);
+    PROP.deleteProperty(k); moved++;
+  });
+
+  STATE.setProperty('storageVersion', STORAGE_VERSION);
+  var tidied = tidyConfig_(true);
+  if (moved || tidied) {
+    Logger.log('Opslag opgeschoond: ' + moved + ' interne waarde(n) verplaatst, ' + tidied +
+               ' instelling(en) verwijderd die gelijk waren aan de standaard. Er staan nu ' +
+               PROP.getKeys().length + ' scripteigenschappen.');
+  }
+}
+
+/** Remove settings that are empty or equal to the default (they change nothing). */
+function tidyConfig() {
+  loadConfig_();
+  var n = tidyConfig_(false);
+  Logger.log(n + ' scripteigenschap(pen) verwijderd die leeg of gelijk aan de standaard waren. Er staan nu ' +
+             PROP.getKeys().length + ' scripteigenschappen.');
+  showConfig();
+}
+
+function tidyConfig_(keepStarter) {
+  var p = PROP.getProperties(), file = readConfigFile_(true), n = 0;
+  Object.keys(p).forEach(function (k) {
+    if (!DEFAULTS.hasOwnProperty(k)) return;
+    if (keepStarter && STARTER_KEYS.indexOf(k) >= 0) return;
+    var v = cleanValue_(p[k]);
+    var base = file.hasOwnProperty(k) ? file[k] : String(DEFAULTS[k]);
+    if ((k === 'CLUB_CODE' || k === 'TEAM_ID') && !file.hasOwnProperty(k)) return;
+    if (v === '' || v === base) { PROP.deleteProperty(k); n++; }
+  });
+  return n;
+}
+
+/* ================================================================== *
+ * CONFIG FILE (Config.gs)
+ * ================================================================== */
+
+/** Settings from the SETTINGS object in Config.gs, as cleaned strings. Blank = not set. */
+function readConfigFile_(quiet) {
+  var out = {};
+  if (typeof SETTINGS === 'undefined' || !SETTINGS || typeof SETTINGS !== 'object') return out;
+  Object.keys(SETTINGS).forEach(function (key) {
+    var v = SETTINGS[key];
+    if (v === null || v === undefined) return;
+    v = cleanValue_(Array.isArray(v) ? v.join(',') : String(v));
+    if (v === '') return;
+    var k = DEFAULTS.hasOwnProperty(key) ? key : normKey_(key);
+    if (!DEFAULTS.hasOwnProperty(k)) {
+      if (!quiet) {
+        var sug = closestKey_(k);
+        WARNINGS.push('Config.gs: onbekende instelling "' + key + '" wordt genegeerd' + (sug ? ' (bedoel je ' + sug + '?)' : '') + '.');
+      }
+      return;
+    }
+    out[k] = v;
+  });
+  return out;
+}
+
+function hasConfigFile_() { return typeof SETTINGS !== 'undefined' && !!SETTINGS && typeof SETTINGS === 'object'; }
+
+/**
+ * Run after editing Config.gs: checks it, and removes Script Properties that
+ * would override a value from Config.gs (or that only repeat a default), so
+ * Config.gs is what counts. Removed values are listed in the log.
+ */
+function updateConfig() {
+  loadConfig_();
+  if (!hasConfigFile_()) {
+    Logger.log('Geen Config.gs gevonden. Maak in de editor een bestand "Config" aan (+ -> Script) en plak de inhoud ' +
+               'van src/Config.gs uit de repository erin, of draai exportConfig om er een te laten maken.');
+    return;
+  }
+  var p = PROP.getProperties(), removed = [];
+  Object.keys(FILE).forEach(function (k) {
+    if (p[k] === undefined) return;
+    var old = SECRET_KEYS.indexOf(k) >= 0 ? '(verborgen)' : '"' + cleanValue_(p[k]) + '"';
+    PROP.deleteProperty(k);
+    removed.push('  ' + k + ' = ' + old + '  ->  Config.gs');
+  });
+  var tidied = tidyConfig_(false);
+  Logger.log(removed.length ? 'Scripteigenschappen verwijderd zodat Config.gs geldt (oude waarden):\n' + removed.join('\n')
+                            : 'Geen scripteigenschappen die Config.gs overschreven.');
+  if (tidied) Logger.log(tidied + ' overbodige scripteigenschap(pen) opgeruimd (leeg of gelijk aan Config.gs/standaard).');
+  showConfig();
+}
+
+/**
+ * Prints a complete Config.gs with your current settings (secrets left out).
+ * Copy it from the log into the file Config.gs, then run updateConfig.
+ */
+function exportConfig() {
+  loadConfig_();
+  Logger.log(configFileText_(true));
+  Logger.log('Kopieer de tekst hierboven naar het bestand Config.gs (maak het aan met + -> Script, naam "Config") ' +
+             'en draai daarna updateConfig.');
+}
+
+function configFileText_(withValues) {
+  function lit(k, v) {
+    var d = String(DEFAULTS[k]);
+    if (/^\d+$/.test(d) && /^-?\d+$/.test(v)) return v;
+    if ((d === 'true' || d === 'false') && (v === 'true' || v === 'false')) return v;
+    return "'" + String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'") + "'";
+  }
+  var out = [
+    '/**',
+    ' * Config.gs: instellingen voor de hockey-agenda (KNHB Match Center -> Google Agenda).',
+    ' *',
+    ' * - Regels met // ervoor doen niets: dan geldt de standaardwaarde die erachter staat.',
+    ' *   Haal de // weg en pas de waarde aan om een instelling te gebruiken.',
+    ' * - Dit bestand blijft staan als je Code.gs bijwerkt naar een nieuwe versie.',
+    ' * - Scripteigenschappen (Projectinstellingen) winnen van dit bestand. Draai na het',
+    ' *   aanpassen updateConfig: die controleert het bestand en ruimt scripteigenschappen op',
+    ' *   die een waarde uit dit bestand zouden overschrijven. showConfig toont het resultaat.',
+    ' * - Ga je dit bestand delen? Zet geheimen (bot-token, API-keys, ntfy-topic, webhook)',
+    ' *   dan in Scripteigenschappen in plaats van hier.',
+    ' */',
+    'var SETTINGS = {',
+  ];
+  CONFIG_KEYS.forEach(function (k) {
+    if (CONFIG_SECTIONS[k]) out.push('', '  // --- ' + CONFIG_SECTIONS[k] + ' ' + new Array(Math.max(3, 60 - CONFIG_SECTIONS[k].length)).join('-'));
+    var secret = SECRET_KEYS.indexOf(k) >= 0, help = CONFIG_HELP[k] || '';
+    var active = withValues && (SRC[k] === 'scripteigenschap' || SRC[k] === 'Config.gs') && !secret;
+    var line;
+    if (k === 'CLUB_CODE' || k === 'TEAM_ID') {
+      line = '  ' + k + ': ' + lit(k, withValues ? RAW[k] : '') + ',';
+    } else if (active) {
+      var v = effectiveValue_(k);
+      line = '  ' + k + ': ' + lit(k, v) + ',';
+      if (v !== String(DEFAULTS[k])) help = (help ? help + '; ' : '') + 'standaard: ' + (DEFAULTS[k] === '' ? '(leeg)' : DEFAULTS[k]);
+    } else {
+      line = '  // ' + k + ': ' + lit(k, String(DEFAULTS[k])) + ',';
+      if (secret && withValues && RAW[k]) help = 'staat in Scripteigenschappen';
+    }
+    if (help) line += new Array(Math.max(2, 52 - line.length)).join(' ') + '// ' + help;
+    out.push(line);
+  });
+  out.push('};', '');
+  return out.join('\n');
+}
+
+/** Trim, and drop quotes people sometimes type around a value: "inbox" -> inbox */
+function cleanValue_(v) {
+  var s = String(v === null || v === undefined ? '' : v).trim();
+  if (s.length >= 2 && /^["'\u201C\u201D\u2018\u2019]/.test(s) && /["'\u201C\u201D\u2018\u2019]$/.test(s)) s = s.slice(1, -1).trim();
+  return s;
+}
+
+function normKey_(k) { return String(k).trim().toUpperCase().replace(/[\s\-.]+/g, '_'); }
+
+function isInternalKey_(k) {
+  if (INTERNAL_KEYS.indexOf(k) >= 0) return true;
+  for (var i = 0; i < INTERNAL_PREFIXES.length; i++) if (k.indexOf(INTERNAL_PREFIXES[i]) === 0) return true;
+  return false;
+}
+
+/**
+ * Property names with a stray space, lower case or a dash are mapped to the
+ * right setting (and renamed). Unknown names are reported with a suggestion.
+ */
+function fixKeys_(p) {
+  Object.keys(p).forEach(function (key) {
+    if (DEFAULTS.hasOwnProperty(key) || isInternalKey_(key)) return;
+    var nk = normKey_(key);
+    if (DEFAULTS.hasOwnProperty(nk)) {
+      var val = cleanValue_(p[key]), cur = p[nk] === undefined ? '' : cleanValue_(p[nk]);
+      if (cur === '' || cur === String(DEFAULTS[nk]) || cur === val) {
+        PROP.setProperty(nk, p[key]); p[nk] = p[key];
+        PROP.deleteProperty(key); delete p[key];
+        WARNINGS.push('Eigenschap "' + key + '" is gelezen als ' + nk + ' en hernoemd.');
+      } else {
+        WARNINGS.push('Eigenschap "' + key + '" lijkt op ' + nk + ', maar ' + nk + ' heeft al een andere waarde ("' + cur +
+                      '"). "' + key + '" wordt genegeerd; verwijder er één.');
+      }
+      return;
+    }
+    var sug = closestKey_(nk);
+    WARNINGS.push('Onbekende eigenschap "' + key + '" wordt genegeerd' + (sug ? ' (bedoel je ' + sug + '?)' : '') + '.');
+  });
+}
+
+function closestKey_(k) {
+  var best = '', bestD = 99;
+  CONFIG_KEYS.forEach(function (c) {
+    var d = editDistance_(k, c);
+    if (d < bestD) { bestD = d; best = c; }
+  });
+  return bestD <= Math.max(2, Math.floor(k.length / 4)) ? best : '';
+}
+
+function editDistance_(a, b) {
+  var prev = [], cur, i, j;
+  for (j = 0; j <= b.length; j++) prev[j] = j;
+  for (i = 1; i <= a.length; i++) {
+    cur = [i];
+    for (j = 1; j <= b.length; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    prev = cur;
+  }
+  return prev[b.length];
 }
 
 /** "new,time" -> {new:true,time:true}; also "all"/"alles" and "none"/"geen". */
-function parseTypes_(str) {
+function parseTypes_(str, key) {
   var set = {};
   String(str || '').split(/[,;]/).forEach(function (t) {
     t = t.trim().toLowerCase();
     if (!t || t === 'none' || t === 'geen') return;
     if (t === 'all' || t === 'alles') NOTIFY_ORDER.forEach(function (x) { set[x] = true; });
-    else set[t] = true;
+    else if (NOTIFY_ORDER.indexOf(t) >= 0) set[t] = true;
+    else WARNINGS.push((key || 'NOTIFY_TYPES') + ': onbekende soort "' + t + '" (geldig: ' + NOTIFY_ORDER.join(', ') + ', all).');
   });
   return set;
 }
 
-function isTrue_(v) { return /^(true|1|yes|ja|aan|on)$/i.test(String(v).trim()); }
+function isTrue_(v)  { return /^(true|1|yes|ja|aan|on|waar)$/i.test(cleanValue_(v)); }
+function isFalse_(v) { return /^(false|0|no|nee|uit|off|onwaar)$/i.test(cleanValue_(v)); }
 
 /** Move settings from v5 key names to their v6 names (runs automatically). */
 function migrateLegacy_(p) {
   var moved = [];
   for (var oldK in LEGACY_KEYS) {
     if (p[oldK] === undefined) continue;
-    var newK = LEGACY_KEYS[oldK];
-    if (p[newK] === undefined || p[newK] === '') { PROP.setProperty(newK, p[oldK]); p[newK] = p[oldK]; }
+    var newK = LEGACY_KEYS[oldK], val = cleanValue_(p[oldK]);
+    // The old name only exists if someone (re)typed it, so its value is the latest intent.
+    if (val !== '' && cleanValue_(p[newK]) !== val) { PROP.setProperty(newK, val); p[newK] = val; }
     PROP.deleteProperty(oldK); delete p[oldK];
-    moved.push(oldK + ' -> ' + newK);
+    moved.push(oldK + ' -> ' + newK + (val !== '' ? ' ("' + val + '")' : ''));
   }
   if (p.ADD_TRAVEL !== undefined) {
     if (p.TRAVEL_MODE === undefined || p.TRAVEL_MODE === '') {
-      var v = String(p.ADD_TRAVEL) === 'false' ? 'off' : 'separate';
+      var v = isFalse_(p.ADD_TRAVEL) ? 'off' : 'separate';
       PROP.setProperty('TRAVEL_MODE', v); p.TRAVEL_MODE = v;
     }
     PROP.deleteProperty('ADD_TRAVEL'); delete p.ADD_TRAVEL;
     moved.push('ADD_TRAVEL -> TRAVEL_MODE');
   }
-  if (p.travelCache !== undefined) { PROP.deleteProperty('travelCache'); delete p.travelCache; }
   if (moved.length) Logger.log('Oude instellingen omgezet: ' + moved.join(', '));
 }
 
@@ -241,59 +585,105 @@ function requireConfig_() {
   }
 }
 
-function blankProp_(k) { var v = PROP.getProperty(k); return v === null || String(v).trim() === ''; }
-
-/** Write any not-yet-present config keys into Script Properties, then show them. */
+/** Put the most-used settings into Script Properties (others: add by hand), then show them. */
 function seedConfig() {
-  var existing = PROP.getProperties();
-  migrateLegacy_(existing);
-  var wrote = [];
-  for (var i = 0; i < CONFIG_KEYS.length; i++) {
-    var k = CONFIG_KEYS[i];
+  loadConfig_();                         // migrates old names/storage and fixes misspelled names first
+  if (hasConfigFile_()) {
+    Logger.log('Config.gs gevonden: zet je instellingen daar. Scripteigenschappen zijn alleen nog nodig voor ' +
+               'geheimen of om iets tijdelijk te overschrijven. Er is niets toegevoegd.');
+    showConfig();
+    return;
+  }
+  var existing = PROP.getProperties(), wrote = [];
+  for (var i = 0; i < STARTER_KEYS.length; i++) {
+    var k = STARTER_KEYS[i];
     if (existing[k] === undefined) { PROP.setProperty(k, DEFAULTS[k]); wrote.push(k); }
   }
   Logger.log(wrote.length ? 'Toegevoegd aan Scripteigenschappen: ' + wrote.join(', ')
-                          : 'Alle instellingen staan al in Scripteigenschappen.');
-  Logger.log('Vul minimaal CLUB_CODE en TEAM_ID in. Lege velden worden waar mogelijk automatisch ingevuld.');
+                          : 'De basisinstellingen staan al in Scripteigenschappen; er is niets overschreven.');
+  Logger.log('Vul minimaal CLUB_CODE en TEAM_ID in. Andere instellingen (zie README of de lijst hieronder) ' +
+             'voeg je toe met "Scripteigenschap toevoegen"; zolang ze ontbreken geldt de standaard.');
   showConfig();
 }
 
-/** Print the settings currently in effect. */
+/** Print the settings in effect, where each value comes from, and any problems. */
 function showConfig() {
   loadConfig_();
-  var lines = ['KNHB Match Center -> Google Agenda v' + VERSION, 'Actieve instellingen:'];
+  var lines = ['KNHB Match Center -> Google Agenda v' + VERSION,
+               'Actieve instellingen  [bron: scripteigenschap > Config.gs > automatisch > standaard]:',
+               hasConfigFile_() ? '(Config.gs gevonden: ' + Object.keys(FILE).length + ' instelling(en) ingevuld)'
+                                : '(geen Config.gs; zie README om er een te gebruiken)'];
   for (var i = 0; i < CONFIG_KEYS.length; i++) {
-    var k = CONFIG_KEYS[i];
-    var v = RAW[k];
-    if (v !== '' && SECRET_KEYS.indexOf(k) >= 0) v = v.slice(0, 4) + '\u2026 (verborgen)';
-    lines.push('  ' + k + ' = ' + (v === '' ? '(leeg -> standaard/automatisch)' : v));
+    var k = CONFIG_KEYS[i], used = effectiveValue_(k), typed = RAW[k];
+    var secret = SECRET_KEYS.indexOf(k) >= 0;
+    var shown = used === '' ? '(leeg)' : (secret ? used.slice(0, 4) + '\u2026 (verborgen)' : used);
+    var note = '';
+    if (!secret && (SRC[k] === 'scripteigenschap' || SRC[k] === 'Config.gs') && typed.toLowerCase() !== used.toLowerCase()) {
+      note += '   (ingevuld: "' + typed + '")';
+    }
+    if (secret && SRC[k] === 'Config.gs') note += '   (geheim in Config.gs: let op bij delen)';
+    if (!secret && (SRC[k] === 'scripteigenschap' || SRC[k] === 'Config.gs') && String(DEFAULTS[k]) !== '' && used !== String(DEFAULTS[k])) {
+      note += '   (code: ' + DEFAULTS[k] + ')';
+    }
+    lines.push('  ' + k + ' = ' + shown + '   [' + SRC[k] + ']' + note);
   }
-  var pc = PROP.getProperty('pouleCache');
-  if (pc) lines.push('  (gesynchroniseerde poules = ' + pc + ')');
-  var last = PROP.getProperty('lastSync');
-  if (last) lines.push('  (laatste synchronisatie = ' + last + ')');
+
+  if (CONFIG.NOTIFY_EMAIL) {
+    var me = ownAddress_();
+    lines.push('', 'E-mail (eigen adres: ' + (me || 'onbekend') + ', EMAIL_DELIVERY = ' + CONFIG.EMAIL_DELIVERY + '):');
+    splitList_(CONFIG.NOTIFY_EMAIL).forEach(function (a) {
+      var self = me && normalizeAddr_(a) === normalizeAddr_(me);
+      lines.push('  ' + a + '  ->  ' + (self && CONFIG.EMAIL_DELIVERY !== 'send'
+        ? 'rechtstreeks in je inbox'
+        : 'gewone mail' + (self ? ' (EMAIL_DELIVERY = send)' : (CONFIG.EMAIL_DELIVERY === 'inbox' ? ' (inbox kan alleen voor je eigen adres)' : ''))));
+    });
+  }
+  var chans = activeChannels_().map(function (c) { return c.name; });
+  lines.push('', 'Meldingskanalen: ' + (chans.length ? chans.join(', ') : 'geen'));
+
+  var pc = STATE.getProperty('pouleCache');
+  if (pc) lines.push('Gesynchroniseerde poules: ' + pc);
+  var last = STATE.getProperty('lastSync');
+  if (last) lines.push('Laatste synchronisatie: ' + last);
+  lines.push('Scripteigenschappen: ' + PROP.getKeys().length + ' van maximaal ' + EDITOR_LIMIT +
+             ' die de editor kan bewerken. Instelling wijzigen of toevoegen: Projectinstellingen -> Scripteigenschappen.');
+  lines.push('', WARNINGS.length ? 'Problemen in de instellingen: ' + WARNINGS.length + ' (zie LET OP hierboven)'
+                                 : 'Geen problemen gevonden in de instellingen.');
   Logger.log(lines.join('\n'));
 }
 
-/** Fill blank TEAM_LABEL / CALENDAR_NAME / TRAVEL_ORIGIN from live data and persist. */
-function enrichConfig_(team) {
-  autofill_('TEAM_LABEL', 'autoLabel', String((team && (team.short_name || team.name)) || '').trim());
-  if (blankProp_('CALENDAR_NAME')) autofill_('CALENDAR_NAME', 'autoCalendar', deriveClubCalendarName_());
-  if (blankProp_('TRAVEL_ORIGIN')) autofill_('TRAVEL_ORIGIN', 'autoOrigin', deriveClubAddress_());
+/** The value the script actually uses, written the way you would type it. */
+function effectiveValue_(k) {
+  var v = CONFIG[k];
+  if (k === 'REMINDERS') return { on: 'true', off: 'false', 'default': 'default' }[v];
+  if (k === 'REMINDER_MINUTES') return v.join(',');
+  if (typeof v === 'boolean' || typeof v === 'number') return String(v);
+  if (typeof v === 'string') return v;
+  return RAW[k];
 }
 
-function autofill_(key, flag, value) {
-  if (!blankProp_(key) || !value) return;
-  PROP.setProperty(key, value);
-  PROP.setProperty(flag, '1');        // remember it was automatic, so a switch can refresh it
-  CONFIG[key] = value; RAW[key] = value;
+/** Fill TEAM_LABEL / CALENDAR_NAME / TRAVEL_ORIGIN from live data when you did not set them. */
+function enrichConfig_(team) {
+  autofill_('TEAM_LABEL', function () { return String((team && (team.short_name || team.name)) || '').trim(); });
+  autofill_('CALENDAR_NAME', deriveClubCalendarName_);
+  autofill_('TRAVEL_ORIGIN', deriveClubAddress_);
+}
+
+function blankProp_(k) { var v = PROP.getProperty(k); return v === null || cleanValue_(v) === ''; }
+
+function autofill_(key, derive) {
+  if (!blankProp_(key) || STATE.getProperty('auto_' + key)) return;
+  var value = derive();
+  if (!value) return;
+  STATE.setProperty('auto_' + key, value);
+  CONFIG[key] = value; RAW[key] = value; SRC[key] = 'automatisch';
   Logger.log('Automatisch ingevuld: ' + key + ' = ' + value);
 }
 
-function resetAuto_(key, flag) {
-  if (PROP.getProperty(flag) !== '1') return;
-  PROP.deleteProperty(key); PROP.deleteProperty(flag);
-  CONFIG[key] = ''; RAW[key] = '';
+/** Forget an automatically filled value, so it is derived again (after a team/club switch). */
+function resetAuto_(key) {
+  STATE.deleteProperty('auto_' + key);
+  if (blankProp_(key)) { CONFIG[key] = ''; RAW[key] = ''; }
 }
 
 function deriveClubCalendarName_() {
@@ -327,20 +717,20 @@ function runSync_() {
   ensureDevice_();
 
   // Detect a switch of team or club. History (anything in the past) is never touched.
-  var prevTeam = PROP.getProperty('syncTeam');
-  var prevClub = PROP.getProperty('syncClub');
+  var prevTeam = STATE.getProperty('syncTeam');
+  var prevClub = STATE.getProperty('syncClub');
   var teamChanged = !!prevTeam && prevTeam !== CONFIG.TEAM_ID;
   var clubChanged = !!prevClub && !!CONFIG.CLUB_CODE && prevClub !== CONFIG.CLUB_CODE;
   var prevPoules = teamChanged ? [] : asArray_(readJson_('pouleCache', []));
   if (teamChanged) {
     Logger.log('Team gewijzigd (' + prevTeam + ' -> ' + CONFIG.TEAM_ID + '). Items uit het verleden blijven staan.');
-    PROP.deleteProperty('pouleCache');
-    resetAuto_('TEAM_LABEL', 'autoLabel');
+    STATE.deleteProperty('pouleCache');
+    resetAuto_('TEAM_LABEL');
   }
   if (clubChanged) {
     Logger.log('Club gewijzigd (' + prevClub + ' -> ' + CONFIG.CLUB_CODE + ').');
-    resetAuto_('CALENDAR_NAME', 'autoCalendar');
-    resetAuto_('TRAVEL_ORIGIN', 'autoOrigin');
+    resetAuto_('CALENDAR_NAME');
+    resetAuto_('TRAVEL_ORIGIN');
   }
 
   var r = resolveTeamPoules_();
@@ -377,12 +767,12 @@ function runSync_() {
     plans.push(plan);
   }
   for (var u in undated) if (!byId[u]) delete undated[u];
-  PROP.setProperty(undatedKey, JSON.stringify(undated));
+  STATE.setProperty(undatedKey, JSON.stringify(undated));
 
   // Title changes caused by our own settings (templates, label) are not news.
   var titleSig = ['TEAM_LABEL', 'TITLE_MATCH', 'TITLE_WARMUP', 'TITLE_TRAVEL', 'TITLE_RETURN',
                   'CANCELLED_TEXT', 'TBD_TEXT'].map(function (k) { return RAW[k]; }).join('\u0001');
-  var titleSigChanged = PROP.getProperty('titleSig') !== null && PROP.getProperty('titleSig') !== titleSig;
+  var titleSigChanged = STATE.getProperty('titleSig') !== null && STATE.getProperty('titleSig') !== titleSig;
 
   var calName = CONFIG.CALENDAR_NAME || 'Hockey (KNHB)';
   var cal = getOrCreateCalendar_(calName);
@@ -391,13 +781,13 @@ function runSync_() {
     prevTeam: (teamChanged && CONFIG.PURGE_PREVIOUS_TEAM) ? prevTeam : null,
     quietTitles: titleSigChanged,
   }));
-  PROP.setProperty('titleSig', titleSig);
+  STATE.setProperty('titleSig', titleSig);
 
-  var firstRun = !PROP.getProperty('lastSync') && !prevTeam;   // v5 installs already have syncTeam
-  PROP.setProperty('syncTeam', CONFIG.TEAM_ID);
-  if (CONFIG.CLUB_CODE) PROP.setProperty('syncClub', CONFIG.CLUB_CODE);
-  PROP.setProperty('pouleCache', JSON.stringify(r.pouleIds));
-  PROP.setProperty('lastSync', new Date().toISOString());
+  var firstRun = !STATE.getProperty('lastSync') && !prevTeam;   // v5 installs already have syncTeam
+  STATE.setProperty('syncTeam', CONFIG.TEAM_ID);
+  if (CONFIG.CLUB_CODE) STATE.setProperty('syncClub', CONFIG.CLUB_CODE);
+  STATE.setProperty('pouleCache', JSON.stringify(r.pouleIds));
+  STATE.setProperty('lastSync', new Date().toISOString());
 
   if (!changes.length) {
     Logger.log('Bijgewerkt. ' + plans.length + ' wedstrijd(en) voor team ' + CONFIG.TEAM_ID +
@@ -555,6 +945,33 @@ function removeTrigger() {
   if (n) Logger.log(n + ' bestaande trigger(s) verwijderd.');
 }
 
+/**
+ * Shows which permissions the script has, and which are missing. Running it
+ * from the editor also triggers Google's permission screen if the manifest
+ * asks for something you have not allowed yet.
+ */
+function checkPermissions() {
+  var info = {};
+  try {
+    var res = UrlFetchApp.fetch('https://oauth2.googleapis.com/tokeninfo?access_token=' +
+                                encodeURIComponent(ScriptApp.getOAuthToken()), { muteHttpExceptions: true });
+    info = JSON.parse(res.getContentText());
+  } catch (e) { Logger.log('Kon de rechten niet opvragen: ' + e); return; }
+  var granted = String(info.scope || '').split(/\s+/);
+  var missing = REQUIRED_SCOPES.filter(function (sc) { return granted.indexOf(sc) < 0; });
+  Logger.log(REQUIRED_SCOPES.map(function (sc) {
+    return (granted.indexOf(sc) >= 0 ? '  OK         ' : '  ONTBREEKT  ') + sc;
+  }).join('\n'));
+  if (!missing.length) { Logger.log('Alle benodigde rechten zijn toegestaan.'); return; }
+  Logger.log('Er ontbreken rechten. Zo los je het op:\n' +
+    '  1. Projectinstellingen: vink "appsscript.json-manifestbestand weergeven in editor" aan.\n' +
+    '  2. Open appsscript.json en vervang de inhoud door src/appsscript.json uit de repository (of voeg de ' +
+    'ontbrekende regels toe aan "oauthScopes"). Sla op.\n' +
+    '  3. Voer checkPermissions opnieuw uit; Google vraagt nu om toestemming. Klik op Toestaan.\n' +
+    '  4. Verschijnt er geen toestemmingsscherm, trek dan de toegang in via ' +
+    'https://myaccount.google.com/permissions (zoek je projectnaam) en voer checkPermissions nogmaals uit.');
+}
+
 /** Send a test message to every configured channel (e-mail, Telegram, ...). */
 function testNotify() {
   loadConfig_();
@@ -626,17 +1043,16 @@ function removeAllSyncedEvents() {
 }
 
 function resetDevice() {
-  PROP.deleteProperty('deviceUUID');
-  PROP.deleteProperty('deviceToken');
-  PROP.deleteProperty('pouleCache');
+  STATE.deleteProperty('deviceUUID');
+  STATE.deleteProperty('deviceToken');
+  STATE.deleteProperty('pouleCache');
   Logger.log('Apparaat + poule-cache gereset.');
 }
 
 /** Clear the cached driving times (e.g. after changing TRAVEL_ORIGIN). */
 function resetTravelCache() {
-  var keys = PROP.getKeys(), n = 0;
-  for (var i = 0; i < keys.length; i++) if (keys[i].indexOf('tc_') === 0) { PROP.deleteProperty(keys[i]); n++; }
-  PROP.deleteProperty('travelCache');
+  var keys = STATE.getKeys(), n = 0;
+  for (var i = 0; i < keys.length; i++) if (keys[i].indexOf('tc_') === 0) { STATE.deleteProperty(keys[i]); n++; }
   Logger.log(n + ' reistijd(en) uit de cache verwijderd.');
 }
 
@@ -646,10 +1062,10 @@ function resetTravelCache() {
  * ================================================================== */
 
 function ensureDevice_() {
-  var uuid = CONFIG.DEVICE_UUID || PROP.getProperty('deviceUUID');
-  if (!uuid) { uuid = Utilities.getUuid(); PROP.setProperty('deviceUUID', uuid); }
-  else if (!PROP.getProperty('deviceUUID')) { PROP.setProperty('deviceUUID', uuid); }
-  if (!PROP.getProperty('deviceToken')) registerDevice_(uuid);
+  var uuid = CONFIG.DEVICE_UUID || STATE.getProperty('deviceUUID');
+  if (!uuid) { uuid = Utilities.getUuid(); STATE.setProperty('deviceUUID', uuid); }
+  else if (STATE.getProperty('deviceUUID') !== uuid) { STATE.setProperty('deviceUUID', uuid); STATE.deleteProperty('deviceToken'); }
+  if (!STATE.getProperty('deviceToken')) registerDevice_(uuid);
 }
 
 function registerDevice_(uuid) {
@@ -662,13 +1078,13 @@ function registerDevice_(uuid) {
   if (code !== 200 && code !== 201) {
     throw new Error('device/register mislukt: HTTP ' + code + ' ' + res.getContentText().slice(0, 200));
   }
-  PROP.setProperty('deviceToken', JSON.parse(res.getContentText()).token);
+  STATE.setProperty('deviceToken', JSON.parse(res.getContentText()).token);
   Logger.log('Nieuw apparaat geregistreerd.');
 }
 
 function signHeaders_(pathWithQuery) {
-  var uuid = PROP.getProperty('deviceUUID');
-  var token = PROP.getProperty('deviceToken') || '';
+  var uuid = STATE.getProperty('deviceUUID');
+  var token = STATE.getProperty('deviceToken') || '';
 
   var path = pathWithQuery, query = '';
   var qi = pathWithQuery.indexOf('?');
@@ -710,7 +1126,7 @@ function apiGet_(pathWithQuery, _retried) {
   });
   var code = res.getResponseCode();
   if (code === 401 && !_retried) {
-    PROP.deleteProperty('deviceToken'); ensureDevice_();
+    STATE.deleteProperty('deviceToken'); ensureDevice_();
     return apiGet_(pathWithQuery, true);
   }
   if (code !== 200) {
@@ -739,10 +1155,10 @@ function travelMinutes_(origin, dest) {
 function cachedTravel_(origin, dest) {
   var key = 'tc_' + hex_(Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, origin + ' => ' + dest,
                                                   Utilities.Charset.UTF_8));
-  var hit = PROP.getProperty(key);
+  var hit = STATE.getProperty(key);
   if (hit) return parseInt(hit, 10) || 0;
   var mins = computeTravel_(origin, dest);
-  if (mins > 0) PROP.setProperty(key, String(mins));
+  if (mins > 0) STATE.setProperty(key, String(mins));
   return mins;
 }
 
@@ -1325,7 +1741,14 @@ function sendEmail_(msg) {
     var self = me && normalizeAddr_(addr) === normalizeAddr_(me);
     if (self && CONFIG.EMAIL_DELIVERY !== 'send') {
       try { insertIntoInbox_(me, msg.subject, body); Logger.log('In inbox gezet: ' + addr); return; }
-      catch (e) { Logger.log('In inbox zetten mislukt (' + e + '); gewoon versturen naar ' + addr + '.'); }
+      catch (e) {
+        Logger.log('In inbox zetten mislukt; gewoon versturen naar ' + addr + '. Reden: ' + e);
+        if (/gmail\.insert|rechten|permission/i.test(String(e))) {
+          Logger.log('OPLOSSING: het script heeft het recht gmail.insert niet. Controleer of appsscript.json de regel ' +
+                     '"https://www.googleapis.com/auth/gmail.insert" bevat en sla op; voer daarna checkPermissions uit ' +
+                     'en klik op Toestaan. Zie README > Problemen oplossen.');
+        }
+      }
     }
     toSend.push(addr);
   });
@@ -1465,7 +1888,7 @@ function hex_(bytes) {
 }
 
 function readJson_(key, def) {
-  var raw = PROP.getProperty(key);
+  var raw = STATE.getProperty(key);
   if (!raw) return def;
   try { return JSON.parse(raw); } catch (e) { return /^\d+$/.test(raw) ? [raw] : def; }
 }
