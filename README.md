@@ -6,7 +6,7 @@ Een Google Apps Script dat de wedstrijden van één hockeyteam uit het [KNHB Mat
 - Een **los item voor de warming-up** en, bij uitwedstrijden, een **los item voor de reistijd** (berekend met Google Maps vanaf het clubadres of je eigen adres). Optioneel ook de terugreis.
 - **Aanvangstijd nog onbekend?** Dan staat de wedstrijd als hele-dag-item in de agenda. Zodra de tijd bekend is, wordt het item omgezet en krijg je een mail.
 - **Afgelast?** Het item wordt grijs met "AFGELAST" in de titel; warming-up en reistijd verdwijnen en je krijgt een mail.
-- E-mail bij wijzigingen, met zelf te kiezen soorten meldingen.
+- Een bericht bij wijzigingen via **e-mail** (rechtstreeks in je inbox), **Telegram**, **WhatsApp**, **ntfy** (pushmelding) of een **webhook** (Discord, Slack, Google Chat). Per kanaal kies je welke soorten meldingen je wilt.
 - Herinneringen (pop-ups) op de agenda-items aan of uit.
 - Alles is in te stellen via **Scripteigenschappen**; je hoeft de code niet aan te passen.
 
@@ -20,7 +20,7 @@ Een Google Apps Script dat de wedstrijden van één hockeyteam uit het [KNHB Mat
 - [Installatie](#installatie)
 - [Instellingen](#instellingen)
 - [Titels aanpassen](#titels-aanpassen)
-- [E-mailmeldingen](#e-mailmeldingen)
+- [Meldingen](#meldingen)
 - [Herinneringen](#herinneringen)
 - [Wisselen van club, team of poule](#wisselen-van-club-team-of-poule)
 - [Meerdere teams](#meerdere-teams)
@@ -53,7 +53,7 @@ Dit zet de tijdzone op `Europe/Amsterdam`, wat nodig is om hele-dag-items op de 
 1. Kies bovenin de functie **`seedConfig`** en klik op **Uitvoeren**.
 2. Google vraagt om toestemming. Omdat het je eigen script is, zie je de melding *"Google heeft deze app niet geverifieerd"*. Klik op **Geavanceerd** → **Ga naar Hockey agenda (onveilig)** → **Toestaan**.
 
-   Het script vraagt toegang tot je agenda (items maken en bijwerken), externe verzoeken (het Match Center), Google Maps (reistijd) en e-mail versturen (meldingen aan jezelf).
+   Het script vraagt alleen de rechten uit `appsscript.json`: je agenda beheren, externe verzoeken (Match Center, Telegram en dergelijke), e-mail versturen, triggers beheren, je e-mailadres zien en berichten **in** je mailbox zetten (`gmail.insert`). Het script kan je mail niet lezen of verwijderen.
 3. Alle instellingen staan nu onder **Projectinstellingen → Scripteigenschappen**.
 
 ### 4. Club en team invullen
@@ -66,7 +66,7 @@ Dit zet de tijdzone op `Europe/Amsterdam`, wat nodig is om hele-dag-items op de 
    ```
 
    Vul het juiste nummer in bij `TEAM_ID`.
-3. Optioneel: vul `NOTIFY_EMAIL` in om mails te krijgen bij wijzigingen.
+3. Optioneel: stel een of meer [meldingskanalen](#meldingen) in.
 
 De rest mag leeg blijven. Bij de eerste run worden `TEAM_LABEL`, `CALENDAR_NAME` en `TRAVEL_ORIGIN` automatisch ingevuld.
 
@@ -74,7 +74,7 @@ De rest mag leeg blijven. Bij de eerste run worden `TEAM_LABEL`, `CALENDAR_NAME`
 
 1. Voer **`syncHockey`** uit.
 2. In Google Agenda verschijnt een nieuwe agenda, standaard *Hockey &lt;clubnaam&gt;*, met de wedstrijden.
-3. De eerste run stuurt nog geen mail, anders krijg je een mail met alle wedstrijden als "nieuw".
+3. De eerste run stuurt nog geen meldingen, anders krijg je alle wedstrijden als "nieuw".
 
 ### 6. Automatisch laten draaien
 
@@ -168,12 +168,24 @@ Kleuren mogen als nummer `1`–`11` of als naam: `LAVENDER`, `SAGE`, `GRAPE`, `F
 | `REMINDER_MINUTES` | `90` | Minuten vooraf. Meerdere mag: `90,1440` (anderhalf uur en een dag vooraf). |
 | `REMINDER_TARGET` | `first` | `first` = alleen het eerste item (reistijd of warming-up) · `match` = alleen het wedstrijditem · `all` = elk item. |
 
-### E-mail
+### Meldingen
 
 | Instelling | Standaard | Uitleg |
 |---|---|---|
-| `NOTIFY_EMAIL` | *(leeg)* | Adres(sen) voor meldingen, gescheiden door komma's. Leeg = geen mail. |
-| `NOTIFY_TYPES` | `new,time,moved,cancelled,restored,location,changed,removed` | Welke meldingen je wilt. Zie [E-mailmeldingen](#e-mailmeldingen). |
+| `NOTIFY_TYPES` | `new,time,moved,cancelled,restored,location,changed,removed` | Welke meldingen je wilt, voor alle kanalen. Zie [Meldingen](#meldingen). |
+| `NOTIFY_EMOJI` | `true` | Emoji vóór elke regel (❌ afgelast, 🕒 tijd bekend, 📅 verplaatst, …). |
+| `NOTIFY_EMAIL` | *(leeg)* | E-mailadres(sen), komma-gescheiden. |
+| `EMAIL_DELIVERY` | `auto` | `auto` = je eigen adres krijgt het bericht rechtstreeks in de inbox, andere adressen een gewone mail · `inbox` = idem · `send` = altijd gewoon versturen. |
+| `TELEGRAM_BOT_TOKEN` | *(leeg)* | Token van je Telegram-bot. |
+| `TELEGRAM_CHAT_ID` | *(leeg)* | Chat-ID('s), komma-gescheiden. Vind je met `telegramChatIds`. |
+| `WHATSAPP_RECIPIENTS` | *(leeg)* | `telefoonnummer:apikey` van CallMeBot, komma-gescheiden. |
+| `NTFY_TOPIC` | *(leeg)* | Naam van je ntfy-topic. |
+| `NTFY_SERVER` | `https://ntfy.sh` | Alleen wijzigen bij een eigen ntfy-server. |
+| `NTFY_TOKEN` | *(leeg)* | Toegangstoken, alleen voor een beveiligde server. |
+| `WEBHOOK_URL` | *(leeg)* | Webhook van Discord, Slack, Google Chat of een eigen endpoint. |
+| `EMAIL_TYPES`, `TELEGRAM_TYPES`, `WHATSAPP_TYPES`, `NTFY_TYPES`, `WEBHOOK_TYPES` | *(leeg)* | Afwijkende soorten per kanaal. Leeg = `NOTIFY_TYPES`. |
+
+`showConfig` toont tokens, API-keys, het ntfy-topic en de webhook-URL verkort, zodat je het logboek kunt delen.
 
 ### Gedrag
 
@@ -220,9 +232,13 @@ Voorbeelden:
 
 ---
 
-## E-mailmeldingen
+## Meldingen
 
-Vul `NOTIFY_EMAIL` in en kies in `NOTIFY_TYPES` welke meldingen je wilt (komma-gescheiden, of `all`):
+Het script meldt wijzigingen via één of meer kanalen. Een kanaal staat aan zodra de instellingen ervan zijn ingevuld. Met **`testNotify`** stuur je een testbericht naar alle ingestelde kanalen; in het logboek zie je per kanaal of het gelukt is.
+
+### Welke meldingen
+
+Kies in `NOTIFY_TYPES` (komma-gescheiden, of `all`):
 
 | Type | Wanneer |
 |---|---|
@@ -236,12 +252,65 @@ Vul `NOTIFY_EMAIL` in en kies in `NOTIFY_TYPES` welke meldingen je wilt (komma-g
 | `removed` | Een toekomstige wedstrijd staat niet meer in het Match Center. |
 | `result` | Er is een uitslag bekend. Staat standaard uit. |
 
-Afspraken:
+Per kanaal kun je afwijken. Een veelgebruikte combinatie: alles naar je eigen mail, alleen afgelastingen en tijden naar de oudergroep op Telegram:
 
-- Je krijgt één mail per run met alle wijzigingen, afgelastingen en bekend geworden tijden bovenaan. Het onderwerp noemt de soorten, bijvoorbeeld *Hockey JO11-1: afgelast, tijd bekend*.
-- Wijzigingen aan wedstrijden in het verleden worden niet gemaild, behalve `result`.
-- Wijzigingen die door je eigen instellingen komen (andere warming-up, reistijd, titels of teamlabel) worden niet gemaild.
-- Met **`testEmail`** controleer je of mail aankomt.
+```
+NOTIFY_TYPES   = all
+TELEGRAM_TYPES = cancelled,time,moved
+```
+
+Verder geldt:
+
+- Je krijgt per run en per kanaal één bericht met alle wijzigingen. Afgelastingen en bekend geworden tijden staan bovenaan.
+- Wijzigingen aan wedstrijden in het verleden worden niet gemeld, behalve `result`.
+- Wijzigingen die door je eigen instellingen komen (andere warming-up, reistijd, titels of teamlabel) worden niet gemeld.
+- Lukt één kanaal niet, dan gaan de andere gewoon door. De fout staat in het logboek.
+
+### E-mail
+
+Vul `NOTIFY_EMAIL` in. Gmail zet mail die je aan jezelf stuurt vaak alleen in **Verzonden**. Daarom zet het script een bericht voor je eigen adres rechtstreeks als **ongelezen bericht in je inbox**, in plaats van het te versturen. Dat werkt ook met varianten van je adres, zoals `naam+hockey@gmail.com`. Andere adressen krijgen een gewone mail.
+
+Dit gebruikt de Gmail-dienst uit `appsscript.json`. Lukt het niet, dan valt het script terug op gewoon versturen en staat de reden in het logboek. Wil je het oude gedrag, zet dan `EMAIL_DELIVERY = send`.
+
+> [!TIP]
+> Wil je een melding op je telefoon? Maak in Gmail een filter op het onderwerp `Hockey` met *Altijd markeren als belangrijk*, en zet in de Gmail-app meldingen op *Alleen belangrijke*. Een echte pushmelding krijg je het betrouwbaarst met Telegram of ntfy.
+
+### Telegram (aanbevolen voor pushmeldingen)
+
+Gratis, betrouwbaar, en werkt ook in een groepsapp met andere ouders.
+
+1. Open in Telegram een chat met **@BotFather** en stuur `/newbot`. Kies een naam en een gebruikersnaam (die moet eindigen op `bot`).
+2. BotFather geeft een token zoals `123456789:AAH...`. Zet die in `TELEGRAM_BOT_TOKEN`.
+3. Stuur je nieuwe bot een willekeurig bericht. Voor een groep: voeg de bot toe aan de groep en stuur daar `/start`.
+4. Voer **`telegramChatIds`** uit. In het logboek staat per chat een regel zoals `TELEGRAM_CHAT_ID=-100123456789 (group) JO11 ouders`.
+5. Zet het nummer in `TELEGRAM_CHAT_ID`. Meerdere chats mag, komma-gescheiden: `555123,-100123456789`.
+6. Draai `testNotify`.
+
+Groeps-ID's beginnen met een minteken; neem dat mee.
+
+### WhatsApp
+
+WhatsApp heeft geen gratis, officiële manier om vanuit een script berichten te sturen. De officiële WhatsApp Business API vraagt een Meta-bedrijfsaccount, een apart telefoonnummer en vooraf goedgekeurde berichtsjablonen. Daarom gebruikt het script **[CallMeBot](https://www.callmebot.com/blog/free-api-whatsapp-messages/)**: een gratis dienst van derden waarmee je WhatsApp-berichten **naar jezelf** kunt sturen.
+
+1. Volg de instructies op de CallMeBot-pagina: voeg hun nummer toe aan je contacten en stuur de activatiezin via WhatsApp. Je krijgt een API-key terug.
+2. Zet in `WHATSAPP_RECIPIENTS`: `+31612345678:123456` (je nummer met landcode, dubbele punt, API-key).
+3. Iemand anders laten meelezen? Die moet zelf ook een API-key aanvragen; voeg die toe met een komma: `+31612345678:123456,+31687654321:654321`.
+
+Beperkingen: geen groepen, het bericht loopt via de server van CallMeBot, en de dienst kan traag zijn of tijdelijk niet werken. Voor een oudergroep is Telegram de betere keuze.
+
+### ntfy (pushmelding zonder account)
+
+[ntfy](https://ntfy.sh) stuurt pushmeldingen naar een app op je telefoon, zonder account.
+
+1. Installeer de ntfy-app (Android of iOS).
+2. Bedenk een lange, onvoorspelbare topicnaam, bijvoorbeeld `hockey-jo11-k7f3q9x2`. Iedereen die de naam kent kan meelezen; behandel hem als een wachtwoord.
+3. Abonneer je in de app op dat topic en zet de naam in `NTFY_TOPIC`.
+
+Afgelastingen, tijden en verplaatsingen krijgen een hogere prioriteit.
+
+### Webhook (Discord, Slack, Google Chat)
+
+Zet de webhook-URL van een kanaal in `WEBHOOK_URL`. Het script herkent Discord-, Slack- en Google Chat-adressen en stuurt het juiste formaat. Bij elk ander adres gaat er een JSON-bericht naartoe met `title`, `text`, `lines`, `urgent`, `calendar` en `link`, bijvoorbeeld voor Home Assistant, Zapier of Make.
 
 ---
 
@@ -291,7 +360,9 @@ Kies de functie bovenin de editor en klik op **Uitvoeren**. De uitvoer staat in 
 | `listClubTeams` | Toont alle teams van `CLUB_CODE` met hun `TEAM_ID`. |
 | `installTrigger` | Maakt (of vervangt) de automatische trigger. |
 | `removeTrigger` | Verwijdert de automatische trigger. |
-| `testEmail` | Stuurt een testmail naar `NOTIFY_EMAIL`. |
+| `testNotify` | Stuurt een testbericht naar alle ingestelde meldingskanalen. |
+| `testEmail` | Stuurt alleen een testmail. |
+| `telegramChatIds` | Toont de chats van je Telegram-bot met hun `TELEGRAM_CHAT_ID`. |
 | `dumpTeamMatches` | Eén regel per wedstrijd: datum, status, of het script hem als afgelast of gespeeld ziet. |
 | `dumpOneMatch` | De volledige ruwe gegevens van één wedstrijd. |
 | `resetTravelCache` | Vergeet de opgeslagen reistijden (na het wijzigen van `TRAVEL_ORIGIN`). |
@@ -306,8 +377,14 @@ Kies de functie bovenin de editor en klik op **Uitvoeren**. De uitvoer staat in 
 **Geen mail bij een afgelasting.**
 Voer `dumpTeamMatches` uit terwijl de afgelaste wedstrijd nog in het Match Center staat en kijk naar `status=` en `afgelast=`. Staat `afgelast=false`, kijk dan met `dumpOneMatch` welk veld of welke tekst de afgelasting aangeeft en voeg dat woord toe aan `CANCEL_KEYWORDS`. Verdwijnt een afgelaste wedstrijd helemaal uit het Match Center, dan krijg je een `removed`-melding.
 
-**Geen mail bij een bekend geworden tijd.**
-Controleer met `dumpTeamMatches` of de wedstrijd vóórdat de tijd bekend was als `tijd bekend=false` werd gezien. Controleer ook of `time` in `NOTIFY_TYPES` staat en of `testEmail` aankomt (kijk ook in je spam en je map Verzonden; Gmail toont mail aan jezelf soms alleen daar).
+**Geen melding bij een bekend geworden tijd.**
+Controleer met `dumpTeamMatches` of de wedstrijd vóórdat de tijd bekend was als `tijd bekend=false` werd gezien. Controleer ook of `time` in `NOTIFY_TYPES` (of in `<KANAAL>_TYPES`) staat en of `testNotify` aankomt.
+
+**Mail staat alleen in Verzonden.**
+Controleer of `EMAIL_DELIVERY` op `auto` staat en of het logboek `In inbox gezet` toont. Staat er `In inbox zetten mislukt`, controleer dan of `appsscript.json` de Gmail-dienst en de scope `gmail.insert` bevat, en voer één functie handmatig uit om de nieuwe rechten te geven.
+
+**Telegram: `chat not found` of `Forbidden`.**
+De bot mag alleen berichten sturen naar chats waar hij eerst een bericht in heeft gezien. Stuur de bot (of de groep) een bericht en draai `telegramChatIds` opnieuw. Voor groepen moet het ID inclusief minteken worden ingevuld.
 
 **De reistijd ontbreekt.**
 De reistijd wordt alleen berekend voor uitwedstrijden met een bekende tijd en een adres van de tegenstander. In het logboek staat `Reistijd: geen route` als Google Maps het adres niet vond. Controleer `TRAVEL_ORIGIN`.
