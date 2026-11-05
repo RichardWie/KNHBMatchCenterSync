@@ -25,7 +25,6 @@ Een Google Apps Script dat de wedstrijden van één hockeyteam uit het [KNHB Mat
 - [Wisselen van club, team of poule](#wisselen-van-club-team-of-poule)
 - [Meerdere teams](#meerdere-teams)
 - [Hulpfuncties](#hulpfuncties)
-- [Upgraden vanaf v5](#upgraden-vanaf-v5)
 - [Problemen oplossen](#problemen-oplossen)
 - [Installeren met clasp](#installeren-met-clasp-optioneel)
 
@@ -299,18 +298,6 @@ Kies de functie bovenin de editor en klik op **Uitvoeren**. De uitvoer staat in 
 | `resetDevice` | Meldt het script opnieuw aan bij de API (bij aanhoudende HTTP-fouten). |
 | `removeFutureSyncedEvents` | Verwijdert alle toekomstige items van dit team. Het verleden blijft staan. |
 | `removeAllSyncedEvents` | Verwijdert **alle** door het script gemaakte items van **alle** teams, ook het verleden. |
-
----
-
-## Upgraden vanaf v5
-
-1. Vervang de code door de nieuwe `src/Code.gs` (en zet het manifest zoals in stap 2).
-2. Voer `seedConfig` uit. Oude instellingen worden automatisch omgezet:
-   - `EMAIL_ON_CHANGE` → `NOTIFY_EMAIL`
-   - `CLUB_ADDRESS` → `TRAVEL_ORIGIN`
-   - `ADD_TRAVEL` → `TRAVEL_MODE` (`true` wordt `separate`, `false` wordt `off`)
-3. Voer `syncHockey` uit. Toekomstige items worden omgezet naar losse wedstrijd-, warming-up- en reistijditems. Items uit het verleden blijven zoals ze zijn. Deze omzetting levert geen "gewijzigd"-mails op.
-4. Draai `installTrigger` om er zeker van te zijn dat er precies één trigger is.
 
 ---
 
