@@ -8,7 +8,7 @@ Een Google Apps Script dat de wedstrijden van één hockeyteam uit het [KNHB Mat
 - **Afgelast?** Het item wordt grijs met "AFGELAST" in de titel; warming-up en reistijd verdwijnen en je krijgt een mail.
 - Een bericht bij wijzigingen via **e-mail** (rechtstreeks in je inbox), **Telegram**, **WhatsApp**, **ntfy** (pushmelding) of een **webhook** (Discord, Slack, Google Chat). Per kanaal kies je welke soorten meldingen je wilt.
 - Herinneringen (pop-ups) op de agenda-items aan of uit.
-- Alles is in te stellen via **Scripteigenschappen**; je hoeft de code niet aan te passen.
+- Alles is in te stellen in een eigen bestand **`Config.gs`** (makkelijk te delen en blijft staan bij updates) of via **Scripteigenschappen**; aan `Code.gs` hoef je niets te veranderen.
 
 > [!WARNING]
 > **Onofficieel.** Dit project gebruikt de API achter de Match Center-webapp (`app.hockeyweerelt.nl`). Die API is niet publiek gedocumenteerd en kan zonder aankondiging veranderen, waardoor het script kan stoppen met werken. Het project is niet gelieerd aan de KNHB of Hockeyweerelt. Synchroniseer met mate; de standaard is eens per 6 uur.
@@ -39,36 +39,38 @@ Je hebt alleen een Google-account nodig.
 1. Ga naar [script.google.com](https://script.google.com) en klik op **Nieuw project**.
 2. Geef het project een naam, bijvoorbeeld *Hockey agenda*.
 3. Vervang de inhoud van `Code.gs` door de inhoud van [`src/Code.gs`](src/Code.gs).
+4. Klik links naast **Bestanden** op **+** → **Script**, noem het `Config` en vervang de inhoud door [`src/Config.gs`](src/Config.gs).
 
 ### 2. Manifest instellen
 
 1. Klik links op het tandwiel (**Projectinstellingen**).
 2. Vink **"appsscript.json"-manifestbestand weergeven in editor** aan.
-3. Open `appsscript.json` in de editor en vervang de inhoud door [`src/appsscript.json`](src/appsscript.json).
+3. Open `appsscript.json` in de editor en vervang de inhoud door [`src/appsscript.json`](src/appsscript.json). Sla op.
 
-Dit zet de tijdzone op `Europe/Amsterdam`, wat nodig is om hele-dag-items op de juiste dag te krijgen.
+Dit zet de tijdzone op `Europe/Amsterdam` en noemt precies welke rechten het script nodig heeft.
 
-### 3. Instellingen aanmaken
+### 3. Club invullen en toestemming geven
 
-1. Kies bovenin de functie **`seedConfig`** en klik op **Uitvoeren**.
-2. Google vraagt om toestemming. Omdat het je eigen script is, zie je de melding *"Google heeft deze app niet geverifieerd"*. Klik op **Geavanceerd** → **Ga naar Hockey agenda (onveilig)** → **Toestaan**.
+1. Zoek je club op in het Match Center. De clubcode is de code van letters en cijfers in de URL van de clubpagina (bijvoorbeeld `HH11AN5`). Vul die in `Config.gs` in bij `CLUB_CODE` en sla op.
+2. Kies bovenin de functie **`checkPermissions`** en klik op **Uitvoeren**.
+3. Google vraagt om toestemming. Omdat het je eigen script is, zie je de melding *"Google heeft deze app niet geverifieerd"*. Klik op **Geavanceerd** → **Ga naar Hockey agenda (onveilig)** → **Toestaan**.
 
    Het script vraagt alleen de rechten uit `appsscript.json`: je agenda beheren, externe verzoeken (Match Center, Telegram en dergelijke), e-mail versturen, triggers beheren, je e-mailadres zien en berichten **in** je mailbox zetten (`gmail.insert`). Het script kan je mail niet lezen of verwijderen.
-3. Alle instellingen staan nu onder **Projectinstellingen → Scripteigenschappen**.
+4. In het logboek moet bij elk recht `OK` staan.
 
-### 4. Club en team invullen
+### 4. Team kiezen
 
-1. **`CLUB_CODE`**: zoek je club op in het Match Center. De clubcode is de code van letters en cijfers in de URL van de clubpagina (bijvoorbeeld `HH11AN5`). Vul die in bij `CLUB_CODE`.
-2. **`TEAM_ID`**: voer de functie **`listClubTeams`** uit. In het **Uitvoeringslogboek** staat per team een regel zoals:
+1. Voer de functie **`listClubTeams`** uit. In het **Uitvoeringslogboek** staat per team een regel zoals:
 
    ```
    TEAM_ID=1975  recent_poule=12345  Jongens O11-1  [field]
    ```
 
-   Vul het juiste nummer in bij `TEAM_ID`.
-3. Optioneel: stel een of meer [meldingskanalen](#meldingen) in.
+2. Vul het nummer in `Config.gs` in bij `TEAM_ID` en sla op.
+3. Optioneel: pas andere instellingen aan in `Config.gs` (haal de `//` weg) en stel een of meer [meldingskanalen](#meldingen) in.
+4. Voer **`showConfig`** uit om te controleren wat er gebruikt wordt.
 
-De rest mag leeg blijven. Bij de eerste run worden `TEAM_LABEL`, `CALENDAR_NAME` en `TRAVEL_ORIGIN` automatisch ingevuld.
+`TEAM_LABEL`, `CALENDAR_NAME` en `TRAVEL_ORIGIN` worden bij de eerste run automatisch ingevuld als je ze leeg laat.
 
 ### 5. Eerste synchronisatie
 
@@ -88,7 +90,49 @@ Open in Google Agenda de instellingen van de nieuwe agenda → **Delen met speci
 
 ## Instellingen
 
-Alle instellingen staan onder **Projectinstellingen → Scripteigenschappen**. Een leeg veld betekent: gebruik de standaardwaarde (of vul automatisch in). Wijzigingen gelden vanaf de volgende run. Met **`showConfig`** zie je wat er op dit moment in gebruik is.
+### Waar zet je instellingen?
+
+Er zijn twee plekken. Je mag ze combineren.
+
+**1. Het bestand `Config.gs` (aanbevolen).**
+Een apart bestand in je project met alle instellingen, elk met een korte uitleg. Een regel met `//` ervoor doet niets: dan geldt de standaardwaarde die erachter staat. Haal de `//` weg en pas de waarde aan om een instelling te gebruiken. Voordelen:
+
+- geen limiet op het aantal instellingen;
+- het blijft staan als je `Code.gs` bijwerkt naar een nieuwe versie;
+- je kunt het delen met andere ouders of teams; zij vullen alleen hun eigen `CLUB_CODE` en `TEAM_ID` in.
+
+Waarden mogen als tekst (`'inbox'`), getal (`30`), ja/nee (`true`) of lijst (`[90, 1440]`).
+
+**2. Scripteigenschappen** (Projectinstellingen → Scripteigenschappen).
+Handig voor **geheimen** die je niet in een gedeeld bestand wilt hebben (`TELEGRAM_BOT_TOKEN`, `WHATSAPP_RECIPIENTS`, `NTFY_TOPIC`, `NTFY_TOKEN`, `WEBHOOK_URL`) en om snel iets te overschrijven zonder de code te openen.
+
+- **Wijzigen**: klik op **Scripteigenschappen bewerken**, pas de waarde aan en klik op **Scripteigenschappen opslaan**.
+- **Toevoegen**: klik in de bewerkmodus op **Scripteigenschap toevoegen** en typ de naam precies zoals in de tabellen hieronder.
+- **Verwijderen**: prullenbak, of maak de waarde leeg.
+
+De editor toont maximaal **50** scripteigenschappen; daarboven kun je niets meer bewerken. Gebruik ze dus spaarzaam. `tidyConfig` ruimt alles op wat leeg is of hetzelfde als `Config.gs` of de standaard.
+
+**Voorrang**: scripteigenschap → `Config.gs` → automatisch ingevuld → standaard. Wat hoger staat, wint.
+
+> [!IMPORTANT]
+> **Na het aanpassen van `Config.gs`: draai `updateConfig`.** Die controleert het bestand (onbekende namen, ongeldige waarden) en verwijdert scripteigenschappen die een waarde uit `Config.gs` zouden overschrijven. In het logboek staat welke dat waren en wat hun oude waarde was. Daarna geldt wat in `Config.gs` staat. Zonder `updateConfig` wordt `Config.gs` ook gelezen, maar dan kan een oude scripteigenschap ervoor gaan; `showConfig` waarschuwt daarvoor.
+
+> [!TIP]
+> **Al ingesteld via scripteigenschappen?** Voer **`exportConfig`** uit. Die schrijft een compleet `Config.gs` met je huidige instellingen naar het logboek (geheimen laat hij weg). Kopieer dat naar `Config.gs`, sla op en draai `updateConfig`.
+
+Pas `Code.gs` zelf niet aan: `DEFAULTS` daarin bevat alleen de standaardwaarden en wordt bij een update overschreven.
+
+### Controleren met showConfig
+
+Draai na elke wijziging **`showConfig`**. Per instelling zie je:
+
+- de waarde die het script **echt gebruikt**;
+- waar die vandaan komt: `[scripteigenschap]`, `[Config.gs]`, `[automatisch]` of `[standaard]`;
+- `(ingevuld: "…")` als je iets hebt ingevuld dat niet als geldige waarde werd herkend;
+- `(code: …)` als de waarde afwijkt van de standaard;
+- per e-mailadres of de melding in je inbox komt of gewoon wordt verstuurd.
+
+Bovenaan staan regels die beginnen met `LET OP:` als er iets mis is: een onbekende of verkeerd gespelde instelling (met een suggestie), een ongeldige waarde, een vreemd e-mailadres of een scripteigenschap die `Config.gs` overschrijft. Kleine slordigheden worden zelf opgelost: een spatie of kleine letters in de naam en aanhalingstekens rond de waarde.
 
 Ja/nee-velden accepteren `true`/`false` (ook `ja`/`nee`, `aan`/`uit`).
 
@@ -355,8 +399,12 @@ Kies de functie bovenin de editor en klik op **Uitvoeren**. De uitvoer staat in 
 | Functie | Wat het doet |
 |---|---|
 | `syncHockey` | Synchroniseert de agenda. Deze functie draait via de trigger. |
-| `seedConfig` | Zet ontbrekende instellingen in Scripteigenschappen en toont ze. |
-| `showConfig` | Toont de instellingen die nu in gebruik zijn. |
+| `showConfig` | Toont de instellingen die nu in gebruik zijn, waar ze vandaan komen en wat er mis is. |
+| `updateConfig` | Na het aanpassen van `Config.gs`: controleert het bestand en verwijdert scripteigenschappen die het zouden overschrijven. |
+| `exportConfig` | Schrijft een compleet `Config.gs` met je huidige instellingen naar het logboek (zonder geheimen). |
+| `tidyConfig` | Verwijdert scripteigenschappen die leeg zijn of gelijk aan `Config.gs`/standaard. |
+| `seedConfig` | Alleen zonder `Config.gs`: zet de tien meestgebruikte instellingen in Scripteigenschappen. |
+| `checkPermissions` | Toont welke rechten het script heeft en welke ontbreken, en vraagt zo nodig opnieuw om toestemming. |
 | `listClubTeams` | Toont alle teams van `CLUB_CODE` met hun `TEAM_ID`. |
 | `installTrigger` | Maakt (of vervangt) de automatische trigger. |
 | `removeTrigger` | Verwijdert de automatische trigger. |
@@ -380,8 +428,23 @@ Voer `dumpTeamMatches` uit terwijl de afgelaste wedstrijd nog in het Match Cente
 **Geen melding bij een bekend geworden tijd.**
 Controleer met `dumpTeamMatches` of de wedstrijd vóórdat de tijd bekend was als `tijd bekend=false` werd gezien. Controleer ook of `time` in `NOTIFY_TYPES` (of in `<KANAAL>_TYPES`) staat en of `testNotify` aankomt.
 
-**Mail staat alleen in Verzonden.**
-Controleer of `EMAIL_DELIVERY` op `auto` staat en of het logboek `In inbox gezet` toont. Staat er `In inbox zetten mislukt`, controleer dan of `appsscript.json` de Gmail-dienst en de scope `gmail.insert` bevat, en voer één functie handmatig uit om de nieuwe rechten te geven.
+**Scripteigenschappen niet te bewerken, of je ziet er maar 50.**
+Er staan te veel scripteigenschappen. Voer `showConfig` of `tidyConfig` uit (via **Uitvoeren** in de editor; dat werkt ook als de lijst alleen-lezen is). De lijst wordt dan opgeruimd tot de instellingen die je echt hebt gewijzigd. Vernieuw daarna de pagina Projectinstellingen.
+
+**Een gewijzigde instelling wordt niet opgepikt.**
+Voer `showConfig` uit en kijk naar de regels met `LET OP:` en naar de bron achter de instelling. Staat er `[standaard]`, dan wordt je instelling niet gevonden: controleer de naam, en in `Config.gs` of de `//` ervoor weg is. Staat er `[scripteigenschap]` terwijl je `Config.gs` hebt aangepast, draai dan `updateConfig`. Staat er `(ingevuld: "…")`, dan is de waarde niet geldig.
+
+**`In inbox zetten mislukt` met *"Je hebt geen rechten om gmail.users.messages.insert te bellen"*.**
+Het script heeft het recht `gmail.insert` niet; de mail is daarom gewoon verstuurd (en staat dan alleen in Verzonden). Oplossing:
+
+1. Voer **`checkPermissions`** uit. Staat er `ONTBREEKT` bij `gmail.insert`, ga dan verder.
+2. Projectinstellingen → vink **"appsscript.json"-manifestbestand weergeven in editor** aan.
+3. Open `appsscript.json` en controleer of het blok `"oauthScopes"` de regel `"https://www.googleapis.com/auth/gmail.insert"` bevat en of onder `"enabledAdvancedServices"` de Gmail-dienst staat. Het makkelijkst: vervang de hele inhoud door [`src/appsscript.json`](src/appsscript.json). Sla op.
+4. Voer `checkPermissions` opnieuw uit. Google vraagt nu om toestemming voor het nieuwe recht; klik op **Toestaan**. Daarna moet overal `OK` staan.
+5. Verschijnt er geen toestemmingsscherm en blijft `gmail.insert` ontbreken? Ga naar [myaccount.google.com/permissions](https://myaccount.google.com/permissions), zoek je project (bijv. *Hockey agenda*), kies **Toegang verwijderen** en voer `checkPermissions` nog een keer uit.
+
+**Mail staat alleen in Verzonden (zonder foutmelding).**
+Controleer of `EMAIL_DELIVERY` op `auto` of `inbox` staat en of `NOTIFY_EMAIL` je eigen Google-adres is; `showConfig` toont per adres wat er gebeurt.
 
 **Telegram: `chat not found` of `Forbidden`.**
 De bot mag alleen berichten sturen naar chats waar hij eerst een bericht in heeft gezien. Stuur de bot (of de groep) een bericht en draai `telegramChatIds` opnieuw. Voor groepen moet het ID inclusief minteken worden ingevuld.
@@ -424,4 +487,4 @@ Ga daarna verder bij [stap 3](#3-instellingen-aanmaken). `.clasp.json` staat in 
 
 ## Disclaimer
 
-Dit is een hobbyproject zonder garantie. Het script leest alleen openbare wedstrijdgegevens en schrijft alleen naar je eigen Google Agenda. Je instellingen en de apparaat-aanmelding blijven in de Scripteigenschappen van je eigen project.
+Dit is een hobbyproject zonder garantie. Het script leest alleen openbare wedstrijdgegevens en schrijft alleen naar je eigen Google Agenda. Je instellingen en de apparaat-aanmelding blijven in de eigenschappen van je eigen project.
