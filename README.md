@@ -1,9 +1,11 @@
 # KNHB Match Center → Google Agenda
 
-Een Google Apps Script dat de wedstrijden van één hockeyteam uit het [KNHB Match Center](https://www.knhb.nl/match-center) haalt en automatisch bijhoudt in een Google Agenda die je met het hele gezin of team kunt delen.
+Een Google Apps Script dat de wedstrijden van één of meer hockeyteams van een club uit het [KNHB Match Center](https://www.knhb.nl/match-center) haalt en automatisch bijhoudt in Google Agenda, per team in een eigen agenda (of samen in één) die je met het hele gezin of team kunt delen.
 
 - Per wedstrijd een agenda-item, met tegenstander, locatie, veld en (na afloop) de uitslag.
-- Een **los item voor de warming-up** en, bij uitwedstrijden, een **los item voor de reistijd** (berekend met Google Maps vanaf het clubadres of je eigen adres). Optioneel ook de terugreis.
+- **Meerdere teams van dezelfde club** in één script, elk met een eigen agenda, eigen teamlabel in de titels en desgewenst eigen instellingen en meldingen.
+- Een **los item voor de warming-up** en, als de wedstrijd niet op een thuislocatie is, een **los item voor de reistijd** (berekend met Google Maps vanaf het clubadres of je eigen adres). Optioneel ook de terugreis.
+- **Zaal-3luik of toernooi**: speelt een team meerdere wedstrijden kort na elkaar op dezelfde locatie, dan komen reistijd en warming-up alleen bij de eerste wedstrijd en de terugreis na de laatste.
 - **Aanvangstijd nog onbekend?** Dan staat de wedstrijd als hele-dag-item in de agenda. Zodra de tijd bekend is, wordt het item omgezet en krijg je een mail.
 - **Afgelast?** Het item wordt grijs met "AFGELAST" in de titel; warming-up en reistijd verdwijnen en je krijgt een mail.
 - Een bericht bij wijzigingen via **e-mail** (rechtstreeks in je inbox), **Telegram**, **WhatsApp**, **ntfy** (pushmelding) of een **webhook** (Discord, Slack, Google Chat). Per kanaal kies je welke soorten meldingen je wilt.
@@ -22,8 +24,8 @@ Een Google Apps Script dat de wedstrijden van één hockeyteam uit het [KNHB Mat
 - [Titels aanpassen](#titels-aanpassen)
 - [Meldingen](#meldingen)
 - [Herinneringen](#herinneringen)
-- [Wisselen van club, team of poule](#wisselen-van-club-team-of-poule)
 - [Meerdere teams](#meerdere-teams)
+- [Wisselen van club, team of agenda](#wisselen-van-club-team-of-agenda)
 - [Hulpfuncties](#hulpfuncties)
 - [Problemen oplossen](#problemen-oplossen)
 - [Installeren met clasp](#installeren-met-clasp-optioneel)
@@ -51,7 +53,7 @@ Dit zet de tijdzone op `Europe/Amsterdam` en noemt precies welke rechten het scr
 
 ### 3. Club invullen en toestemming geven
 
-1. Zoek je club op in het Match Center. De clubcode is de code van letters en cijfers in de URL van de clubpagina (bijvoorbeeld `HH11HM9`). Vul die in `Config.gs` in bij `CLUB_CODE` en sla op.
+1. Zoek je club op in het Match Center. De clubcode is de code van letters en cijfers in de URL van de clubpagina (bijvoorbeeld `HH11AN5`). Vul die in `Config.gs` in bij `CLUB_CODE` en sla op.
 2. Kies bovenin de functie **`checkPermissions`** en klik op **Uitvoeren**.
 3. Google vraagt om toestemming. Omdat het je eigen script is, zie je de melding *"Google heeft deze app niet geverifieerd"*. Klik op **Geavanceerd** → **Ga naar Hockey agenda (onveilig)** → **Toestaan**.
 
@@ -63,14 +65,14 @@ Dit zet de tijdzone op `Europe/Amsterdam` en noemt precies welke rechten het scr
 1. Voer de functie **`listClubTeams`** uit. In het **Uitvoeringslogboek** staat per team een regel zoals:
 
    ```
-   TEAM_ID=8747  recent_poule=12345  D1  [field]
+   TEAM_ID=1975  recent_poule=12345  Jongens O11-1  [field]
    ```
 
-2. Vul het nummer in `Config.gs` in bij `TEAM_ID` en sla op.
+2. Vul het nummer in `Config.gs` in bij `TEAM_ID` en sla op. Meerdere teams: zie [Meerdere teams](#meerdere-teams); onder de teamlijst zet `listClubTeams` een kant-en-klaar `TEAMS`-blok in het logboek.
 3. Optioneel: pas andere instellingen aan in `Config.gs` (haal de `//` weg) en stel een of meer [meldingskanalen](#meldingen) in.
 4. Voer **`showConfig`** uit om te controleren wat er gebruikt wordt.
 
-`TEAM_LABEL`, `CALENDAR_NAME` en `TRAVEL_ORIGIN` worden bij de eerste run automatisch ingevuld als je ze leeg laat.
+`TEAM_LABEL`, `CALENDAR_NAME` en `TRAVEL_ORIGIN` worden bij de eerste run per team automatisch ingevuld als je ze leeg laat.
 
 ### 5. Eerste synchronisatie
 
@@ -141,7 +143,8 @@ Ja/nee-velden accepteren `true`/`false` (ook `ja`/`nee`, `aan`/`uit`).
 | Instelling | Standaard | Uitleg |
 |---|---|---|
 | `CLUB_CODE` | | Clubcode uit het Match Center. |
-| `TEAM_ID` | | Team-ID; vind je met `listClubTeams`. |
+| `TEAM_ID` | | Team-ID; vind je met `listClubTeams`. Meerdere teams zonder eigen instellingen: komma-gescheiden, `1975, 2001`. |
+| `TEAMS` | *(leeg)* | Meerdere teams, elk met eigen instellingen. Zie [Meerdere teams](#meerdere-teams). |
 
 ### Team en competitie
 
@@ -155,9 +158,10 @@ Ja/nee-velden accepteren `true`/`false` (ook `ja`/`nee`, `aan`/`uit`).
 
 | Instelling | Standaard | Uitleg |
 |---|---|---|
-| `CALENDAR_NAME` | *(automatisch)* | Naam van de agenda. Bestaat die nog niet, dan wordt hij aangemaakt. Automatisch: *Hockey &lt;clubnaam&gt;*. |
+| `CALENDAR_NAME` | *(automatisch)* | Naam van de agenda. Bestaat die nog niet, dan wordt hij aangemaakt. Mag `{club}`, `{label}` (teamlabel) en `{team}` (volledige teamnaam) bevatten, bijv. `Hockey {label}`. Automatisch: *Hockey &lt;club&gt;* bij één team, *Hockey &lt;club&gt; &lt;label&gt;* bij meerdere. |
 | `TIMEZONE` | `Europe/Amsterdam` | Tijdzone voor tijden en hele-dag-items. Houd gelijk aan `appsscript.json`. |
-| `MATCH_MINUTES` | `80` | Duur van het wedstrijditem (4×17,5 min spelen + pauzes ≈ 80). |
+| `MATCH_MINUTES` | `80` | Duur van een veldwedstrijd (4×17,5 min spelen + pauzes ≈ 80). |
+| `MATCH_MINUTES_INDOOR` | `50` | Duur van een zaalwedstrijd. Zaalwedstrijden worden herkend aan de poule of het veldtype; controleer met `dumpTeamMatches` (kolom `zaal=`). Klopt dat niet, zet dan `MATCH_MINUTES` per team in `TEAMS`. |
 | `UNKNOWN_TIME_ALLDAY` | `true` | Wedstrijd met onbekende aanvangstijd als hele-dag-item. Bij `false` staat hij om 00:00. |
 
 ### Warming-up
@@ -167,18 +171,46 @@ Ja/nee-velden accepteren `true`/`false` (ook `ja`/`nee`, `aan`/`uit`).
 | `WARMUP_MODE` | `separate` | `separate` = los item vóór de wedstrijd · `include` = wedstrijditem begint eerder · `off` = geen warming-up. |
 | `WARMUP_MINUTES` | `45` | Hoe lang vóór de aanvang je aanwezig moet zijn. |
 
-### Reistijd (alleen uitwedstrijden)
+### Reistijd
 
 | Instelling | Standaard | Uitleg |
 |---|---|---|
 | `TRAVEL_MODE` | `separate` | `separate` = los item · `include` = het eerste item (warming-up of wedstrijd) begint eerder · `off` = geen reistijd. |
+| `TRAVEL_WHEN` | `location` | Wanneer er reistijd bij komt: `location` = als de wedstrijd niet op een thuislocatie is (ook bij een "thuiswedstrijd" elders, zoals in de zaal) · `away` = alleen bij uitwedstrijden (oude werking) · `always` = altijd. |
+| `HOME_LOCATIONS` | *(leeg)* | Extra thuislocaties, bijvoorbeeld je eigen sporthal: `Sporthal Oost; De Veldhuis`. Gescheiden door `;`. Een deel van de naam of het adres is genoeg. |
+| `HOME_MAX_MINUTES` | `3` | Een locatie binnen zoveel minuten rijden van de club telt ook als thuis. `0` = uit. |
 | `TRAVEL_ORIGIN` | *(automatisch)* | Vertrekadres. Automatisch het adres van je club. Vul je eigen adres in als je van huis vertrekt. Draai daarna `resetTravelCache`. |
 | `TRAVEL_BUFFER_MINUTES` | `0` | Extra marge bovenop de rijtijd (parkeren, verzamelen). |
 | `TRAVEL_ROUND_MINUTES` | `5` | Rijtijd naar boven afronden op een veelvoud hiervan. `0` of `1` = niet afronden. |
 | `RETURN_TRAVEL` | `false` | Ook een item voor de terugreis. |
-| `RETURN_DELAY_MINUTES` | `30` | Hoe lang na het einde van de wedstrijd de terugreis begint. |
+| `RETURN_DELAY_MINUTES` | `30` | Hoe lang na het einde van de (laatste) wedstrijd de terugreis begint. |
 
-De rijtijd komt uit Google Maps (gemiddelde rijtijd, geen live verkeer) en wordt per route bewaard, zodat Maps maar één keer per tegenstander wordt aangeroepen.
+De rijtijd komt uit Google Maps (gemiddelde rijtijd, geen live verkeer) en wordt per route bewaard, zodat Maps maar één keer per locatie wordt aangeroepen.
+
+**Wat telt als thuislocatie?** Met `TRAVEL_WHEN = location` kijkt het script naar de locatie in het agenda-item, niet naar wie de thuisploeg is. Een locatie is thuis als:
+
+1. hij overeenkomt met een naam of adres uit `HOME_LOCATIONS`; of
+2. het adres of de postcode gelijk is aan die van je club; of
+3. hij binnen `HOME_MAX_MINUTES` rijden van je club ligt.
+
+In alle andere gevallen komt er reistijd bij. Met `dumpTeamMatches` zie je per wedstrijd wat het script besluit (kolom `thuislocatie=`). Krijgt een wedstrijd op je eigen sporthal toch reistijd, zet die sporthal dan in `HOME_LOCATIONS`.
+
+### Meerdere wedstrijden achter elkaar (zaal-3luik, toernooi)
+
+| Instelling | Standaard | Uitleg |
+|---|---|---|
+| `CLUSTER_GAP_MINUTES` | `120` | Wedstrijden van één team op dezelfde dag en dezelfde locatie, met hoogstens zoveel minuten tussen het einde van de ene en het begin van de volgende, vormen één blok. `0` = uit. |
+| `CLUSTER_WARMUP` | `first` | `first` = warming-up alleen voor de eerste wedstrijd van het blok · `each` = voor elke wedstrijd. |
+
+Voor een blok geldt:
+
+- **reistijd** alleen vóór de eerste wedstrijd, en alleen als de locatie niet thuis is;
+- **warming-up** alleen vóór de eerste wedstrijd (tenzij `CLUSTER_WARMUP = each`);
+- **terugreis** alleen na de laatste wedstrijd;
+- **herinnering** (met `REMINDER_TARGET = first`) alleen bij het eerste item van het blok;
+- in de omschrijving van elke wedstrijd en van de reistijd staan alle wedstrijden van het blok.
+
+Wordt de eerste wedstrijd afgelast, dan schuiven reistijd en warming-up automatisch door naar de volgende. Bij een toernooi met een lange pauze kun je `CLUSTER_GAP_MINUTES` hoger zetten (bijv. `240`), eventueel alleen voor dat team in `TEAMS`.
 
 ### Titels
 
@@ -373,22 +405,61 @@ Afgelaste wedstrijden, wedstrijden zonder tijd en wedstrijden in het verleden kr
 
 ---
 
-## Wisselen van club, team of poule
+## Meerdere teams
 
-Pas `CLUB_CODE`, `TEAM_ID` of `POULE_ID` aan; de volgende run regelt de rest.
+Eén script kan alle teams van één club bijhouden, bijvoorbeeld van al je kinderen. Elk team krijgt:
 
-- **Het verleden blijft onaangeroerd.** Items die al voorbij zijn worden nooit verwijderd, verschoven of hernoemd, ook niet als ze bij een vorig team of seizoen horen. Alleen een uitslag die later binnenkomt wordt nog aan het item toegevoegd.
-- **Toekomstige items van het vorige team** worden verwijderd (uit te zetten met `PURGE_PREVIOUS_TEAM = false`).
-- Was `TEAM_LABEL` automatisch ingevuld, dan wordt het opnieuw bepaald voor het nieuwe team.
-- Bij een **andere club** worden een automatisch ingevulde `CALENDAR_NAME` en `TRAVEL_ORIGIN` opnieuw bepaald. Er komt dan dus een nieuwe agenda *Hockey &lt;nieuwe club&gt;*; de oude agenda met de historie blijft bestaan. Wil je in dezelfde agenda blijven, vul `CALENDAR_NAME` dan zelf in.
+- zijn **eigen agenda** (standaard *Hockey &lt;club&gt; &lt;label&gt;*), tenzij je teams bewust dezelfde agenda geeft;
+- zijn **eigen teamlabel** in de titels (`JO11-1 | …`), automatisch uit het Match Center of zelf ingesteld;
+- desgewenst **eigen instellingen**: warming-up, reistijd, herinneringen, titels, kleuren en meldingen (bijv. elk team naar een andere Telegram-groep).
+
+### Zonder eigen instellingen
+
+Zet de team-ID's komma-gescheiden in `TEAM_ID`:
+
+```js
+TEAM_ID: '1975, 2001',
+```
+
+### Met eigen instellingen per team
+
+Gebruik `TEAMS` in `Config.gs`. Alles wat je per team niet noemt, komt uit de rest van `Config.gs` (of uit Scripteigenschappen of de standaard):
+
+```js
+CLUB_CODE: 'HH11AN5',
+NOTIFY_EMAIL: 'jij@gmail.com',             // geldt voor alle teams...
+TEAMS: [
+  { TEAM_ID: 1975, CALENDAR_NAME: 'Hockey Daan' },
+  { TEAM_ID: 2001, CALENDAR_NAME: 'Hockey Eva', WARMUP_MINUTES: 30,
+    NOTIFY_EMAIL: 'jij@gmail.com, partner@gmail.com',   // ...behalve hier
+    TELEGRAM_CHAT_ID: '-100123456789' },               // oudergroep van dit team
+],
+```
+
+`listClubTeams` zet onder de teamlijst een `TEAMS`-blok in het logboek dat je kunt kopiëren. Korte namen mogen ook: `ID`, `LABEL`, `CALENDAR` en `POULE`.
+
+Per team in te stellen: alles behalve `CLUB_CODE`, `TIMEZONE`, `SYNC_INTERVAL_HOURS`, `TELEGRAM_BOT_TOKEN`, `NTFY_SERVER`, `NTFY_TOKEN` en de geavanceerde instellingen. `showConfig` meldt het als je iets per team zet wat niet kan, of een naam verkeerd spelt.
+
+Werk je liever met Scripteigenschappen? `TEAMS` kan daar ook, als JSON op één regel: `[{"TEAM_ID":1975,"CALENDAR_NAME":"Hockey Daan"},{"TEAM_ID":2001}]`.
+
+### Goed om te weten
+
+- **Eén agenda voor alle teams** kan ook: geef ze dezelfde `CALENDAR_NAME`, bijvoorbeeld door `CALENDAR_NAME: 'Hockey {club}'` buiten `TEAMS` te zetten. Het teamlabel in de titel laat zien wiens wedstrijd het is.
+- **Twee eigen teams tegen elkaar** (een onderlinge clubwedstrijd) komt bij beide teams in de agenda, elk met het eigen label en de eigen warming-up.
+- **Meldingen** gaan per team: elk bericht noemt het team in het onderwerp (*Hockey JO11-1: afgelast*). Hebben teams dezelfde ontvanger, dan krijgt die per team een bericht.
+- **Een team toevoegen** levert geen stortvloed aan "nieuw"-meldingen op: de eerste synchronisatie van een team is stil.
+- `showConfig` toont per team het label, de agenda, eigen instellingen, meldingskanalen en de laatste synchronisatie.
 
 ---
 
-## Meerdere teams
+## Wisselen van club, team of agenda
 
-Elk scriptproject volgt één team. Voor meerdere teams (bijvoorbeeld twee kinderen) maak je per team een kopie van het project (**Overzicht → Kopie maken**), elk met een eigen `TEAM_ID` en trigger.
+Pas `CLUB_CODE`, `TEAM_ID`/`TEAMS`, `POULE_ID` of `CALENDAR_NAME` aan; de volgende run regelt de rest.
 
-De kopieën mogen dezelfde agenda gebruiken: elk script beheert alleen de items met zijn eigen `TEAM_ID`. Geef ze wel verschillende `TEAM_LABEL`s, zodat je in de agenda ziet welk item bij wie hoort.
+- **Het verleden blijft onaangeroerd.** Items die al voorbij zijn worden nooit verwijderd, verschoven of hernoemd, ook niet als ze bij een vorig team, seizoen of andere agenda horen. Alleen een uitslag die later binnenkomt wordt nog aan het item toegevoegd.
+- **Een team uit de lijst gehaald?** Dan worden de toekomstige items van dat team uit zijn agenda verwijderd (uit te zetten met `PURGE_PREVIOUS_TEAM = false`).
+- **Andere agenda voor een team?** De toekomstige items verhuizen naar de nieuwe agenda; gespeelde wedstrijden blijven in de oude agenda staan en worden niet gekopieerd. Dit levert geen meldingen op.
+- Bij een **andere club** worden automatisch ingevulde agendanamen en vertrekadressen opnieuw bepaald. Wil je in dezelfde agenda blijven, vul `CALENDAR_NAME` dan zelf in.
 
 ---
 
@@ -405,20 +476,21 @@ Kies de functie bovenin de editor en klik op **Uitvoeren**. De uitvoer staat in 
 | `tidyConfig` | Verwijdert scripteigenschappen die leeg zijn of gelijk aan `Config.gs`/standaard. |
 | `seedConfig` | Alleen zonder `Config.gs`: zet de tien meestgebruikte instellingen in Scripteigenschappen. |
 | `checkPermissions` | Toont welke rechten het script heeft en welke ontbreken, en vraagt zo nodig opnieuw om toestemming. |
-| `listClubTeams` | Toont alle teams van `CLUB_CODE` met hun `TEAM_ID`. |
+| `listClubTeams` | Toont alle teams van `CLUB_CODE` met hun `TEAM_ID`, plus een `TEAMS`-blok om te kopiëren. |
 | `installTrigger` | Maakt (of vervangt) de automatische trigger. |
 | `removeTrigger` | Verwijdert de automatische trigger. |
-| `testNotify` | Stuurt een testbericht naar alle ingestelde meldingskanalen. |
+| `testNotify` | Stuurt een testbericht naar alle ingestelde meldingskanalen, per team (dezelfde ontvanger maar één keer). |
 | `testEmail` | Stuurt alleen een testmail. |
 | `telegramChatIds` | Toont de chats van je Telegram-bot met hun `TELEGRAM_CHAT_ID`. |
-| `dumpTeamMatches` | Eén regel per wedstrijd: datum, status, of het script hem als afgelast of gespeeld ziet. |
+| `dumpTeamMatches` | Per team één regel per wedstrijd: datum, status, of het script hem als afgelast of gespeeld ziet. |
 | `dumpOneMatch` | De volledige ruwe gegevens van één wedstrijd. |
 | `resetTravelCache` | Vergeet de opgeslagen reistijden (na het wijzigen van `TRAVEL_ORIGIN`). |
 | `resetDevice` | Meldt het script opnieuw aan bij de API (bij aanhoudende HTTP-fouten). |
-| `removeFutureSyncedEvents` | Verwijdert alle toekomstige items van dit team. Het verleden blijft staan. |
-| `removeAllSyncedEvents` | Verwijdert **alle** door het script gemaakte items van **alle** teams, ook het verleden. |
+| `removeFutureSyncedEvents` | Verwijdert alle toekomstige items van alle ingestelde teams. Het verleden blijft staan. |
+| `removeAllSyncedEvents` | Verwijdert **alle** door het script gemaakte items uit de agenda's van alle teams, ook het verleden. |
 
 ---
+
 
 ## Problemen oplossen
 
@@ -449,8 +521,11 @@ Controleer of `EMAIL_DELIVERY` op `auto` of `inbox` staat en of `NOTIFY_EMAIL` j
 **Telegram: `chat not found` of `Forbidden`.**
 De bot mag alleen berichten sturen naar chats waar hij eerst een bericht in heeft gezien. Stuur de bot (of de groep) een bericht en draai `telegramChatIds` opnieuw. Voor groepen moet het ID inclusief minteken worden ingevuld.
 
+**Reistijd bij een wedstrijd op je eigen locatie (of juist niet bij een uitlocatie).**
+Draai `dumpTeamMatches` en kijk naar `thuislocatie=`. Staat er `nee` bij je eigen sporthal of veld, zet de naam of het adres dan in `HOME_LOCATIONS`. Wil je de oude werking (alleen reistijd bij uitwedstrijden), zet dan `TRAVEL_WHEN = away`.
+
 **De reistijd ontbreekt.**
-De reistijd wordt alleen berekend voor uitwedstrijden met een bekende tijd en een adres van de tegenstander. In het logboek staat `Reistijd: geen route` als Google Maps het adres niet vond. Controleer `TRAVEL_ORIGIN`.
+De reistijd wordt alleen berekend voor wedstrijden met een bekende tijd en een adres, die niet op een thuislocatie zijn. In het logboek staat `Reistijd: geen route` als Google Maps het adres niet vond. Controleer `TRAVEL_ORIGIN`.
 
 **`HTTP 401` of `HTTP 403` in het logboek.**
 Voer `resetDevice` uit en daarna `syncHockey`. Blijft het, dan is de API mogelijk veranderd; controleer of er een nieuwere versie van dit script is of probeer een hogere `API_VERSION`.
