@@ -22,6 +22,7 @@ var SETTINGS = {
   // meldingen), gebruik dan TEAMS. Alles wat je per team niet noemt, komt uit de rest van dit
   // bestand. Niet per team: CLUB_CODE, TIMEZONE, SYNC_INTERVAL_HOURS, TELEGRAM_BOT_TOKEN,
   // NTFY_SERVER, NTFY_TOKEN en de geavanceerde instellingen. listClubTeams geeft alle team-ID's.
+
   // TEAMS: [
   //   { TEAM_ID: 1975, CALENDAR_NAME: 'Hockey Daan' },
   //   { TEAM_ID: 2001, CALENDAR_NAME: 'Hockey Eva', WARMUP_MINUTES: 30, TELEGRAM_CHAT_ID: '-100123' },
